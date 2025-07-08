@@ -16,21 +16,22 @@ public class BusinessValidationService {
 
     private final Map<Class<?>, Map<String, BusinessValidator<?>>> validatorsMap;
 
-    @SuppressWarnings("unchecked")
     public BusinessValidationService(ApplicationContext applicationContext) {
         @SuppressWarnings("rawtypes")
         Map<String, BusinessValidator> beans = applicationContext.getBeansOfType(BusinessValidator.class);
 
-        this.validatorsMap = beans.values().stream().collect(Collectors.groupingBy(
-            BusinessValidator::supports, Collectors.toMap(
-                BusinessValidator::getRuleName,
-                Function.identity(),
+        this.validatorsMap = beans.values().stream()
+            .map(validator -> (BusinessValidator<?>) validator)
+            .collect(Collectors.groupingBy(BusinessValidator::supports,
+                Collectors.toMap(BusinessValidator::getRuleName, Function.identity(),
                 (existing, replacement) -> existing
             )
         ));
 
         log.info("Loaded {} business validators grouped by target type and rule name.", beans.size());
     }
+
+
 
     public <T> void validate(T target, boolean failFast, String[] ruleNames, String customErrorMessage) {
         if (target == null) {
