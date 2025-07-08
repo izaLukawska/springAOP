@@ -7,6 +7,7 @@ import org.lukawska.springaop.entity.User;
 import org.lukawska.springaop.exception.UserAlreadyExistsException;
 import org.lukawska.springaop.exception.UserNotFoundException;
 import org.lukawska.springaop.repository.UserRepository;
+import org.lukawska.springaop.validation.BusinessValidation;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -20,16 +21,17 @@ public class UserService {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
-    public UserResponse createUser(UserRequest request){
+    @BusinessValidation(rules = {"validateUsername", "validateEmail", "validateAge"}, failFast = false)
+    public UserResponse createUser(UserRequest request) {
         try {
             return mapToResponse(repository.save(mapToUser(request)));
-        } catch (DataIntegrityViolationException e){
+        } catch (DataIntegrityViolationException e) {
             throw new UserAlreadyExistsException();
         }
     }
 
-    public void deleteUserById(Long id){
-        if(!repository.existsById(id)){
+    public void deleteUserById(Long id) {
+        if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);
         }
 
