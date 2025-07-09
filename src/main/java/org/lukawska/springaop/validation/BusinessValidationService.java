@@ -24,18 +24,16 @@ public class BusinessValidationService {
             .map(validator -> (BusinessValidator<?>) validator)
             .collect(Collectors.groupingBy(BusinessValidator::supports,
                 Collectors.toMap(BusinessValidator::getRuleName, Function.identity(),
-                (existing, replacement) -> existing
-            )
-        ));
+                    (existing, replacement) -> existing
+                )
+            ));
 
         log.info("Loaded {} business validators grouped by target type and rule name.", beans.size());
     }
 
-
-
     public <T> void validate(T target, boolean failFast, String[] ruleNames, String customErrorMessage) {
         if (target == null) {
-            log.warn("Attempted to validate a null object. Skipping validation.");
+            log.warn("User cannot be null");
             return;
         }
 
@@ -47,9 +45,8 @@ public class BusinessValidationService {
             .flatMap(entry -> entry.getValue().entrySet().stream())
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-
         if (specificTypeValidators.isEmpty()) {
-            log.debug("No business validators found for type: {} ", targetClass.getName());
+            log.info("No validators found for type: {}.", targetClass.getName());
             return;
         }
 
@@ -57,30 +54,28 @@ public class BusinessValidationService {
             ? Arrays.stream(ruleNames).collect(Collectors.toSet())
             : specificTypeValidators.keySet();
 
-        log.debug("Running business validation for object of type {} with {} specified rules. Fail-fast: {}",
-            targetClass.getName(), rulesToExecute.size(), failFast);
+        log.info("Running rules: {}", rulesToExecute);
 
         for(String ruleName : rulesToExecute){
             BusinessValidator<?> validator = specificTypeValidators.get(ruleName);
 
             if (validator == null) {
-                log.warn("No validator found for rule name: '{}' for type {}.", ruleName, targetClass.getName());
+                log.warn("No validator bean found for rule name: '{}'.", ruleName);
                 continue;
             }
 
             @SuppressWarnings("unchecked")
-            List<ValidationError> errors = ((BusinessValidator<T>) validator).validate(target);
+            List<ValidationError> currentRuleErrors = ((BusinessValidator<T>) validator).validate(target);
 
-            if (!errors.isEmpty()) {
-                log.warn("Validation failed for validator {} (rule: '{}') on object {}. Errors: {}",
-                    validator.getClass().getSimpleName(), ruleName, targetClass.getName(), errors);
-                allErrors.addAll(errors);
+            if (!currentRuleErrors.isEmpty()) {
+                log.info("Validator fail for: {} with errors {} on object {}",
+                    ruleName, currentRuleErrors,targetClass.getName());
+
+                allErrors.addAll(currentRuleErrors);
+
                 if (failFast) {
                     throw new BusinessValidationException(customErrorMessage, allErrors);
                 }
-            } else {
-                log.debug("Validation successful for validator {} (rule: '{}') on object {}.",
-                    validator.getClass().getSimpleName(), ruleName, targetClass.getName());
             }
         }
 
@@ -88,6 +83,7 @@ public class BusinessValidationService {
             throw new BusinessValidationException(customErrorMessage, allErrors);
         }
 
-        log.debug("Business validation completed successfully for object of type {}.", targetClass.getName());
+        log.info("Validation completed for object of type {}", targetClass.getName());
+
     }
 }

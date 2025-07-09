@@ -1,7 +1,7 @@
 package org.lukawska.springaop.validation.validators;
 
 import lombok.RequiredArgsConstructor;
-import org.lukawska.springaop.entity.User;
+import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.repository.UserRepository;
 import org.lukawska.springaop.validation.BusinessValidator;
 import org.lukawska.springaop.validation.ValidationError;
@@ -13,12 +13,12 @@ import java.util.Objects;
 
 @Component("validateEmail")
 @RequiredArgsConstructor
-public class ValidateEmailValidator implements BusinessValidator<User> {
+public class ValidateEmailValidator implements BusinessValidator<UserRequest> {
 
     private final UserRepository repository;
 
     @Override
-    public List<ValidationError> validate(User targetUser) {
+    public List<ValidationError> validate(UserRequest targetUser) {
         List<ValidationError> errors = new ArrayList<>();
 
         if (targetUser == null) {
@@ -26,18 +26,18 @@ public class ValidateEmailValidator implements BusinessValidator<User> {
             return errors;
         }
 
-        if (Objects.isNull(targetUser.getEmail()) || targetUser.getEmail().trim().isBlank()) {
+        if (Objects.isNull(targetUser.email()) || targetUser.email().trim().isBlank()) {
             errors.add(new ValidationError("email", "Email cannot be blank"));
-        } else if (repository.existsByEmail(targetUser.getEmail())) {
-            errors.add(new ValidationError("email", "Email taken: " + targetUser.getEmail()));
+        } else if (repository.existsByEmail(targetUser.email())) {
+            errors.add(new ValidationError("email", "Email taken: " + targetUser.email()));
         }
 
         return errors;
     }
 
     @Override
-    public Class<User> supports() {
-        return User.class;
+    public Class<UserRequest> supports() {
+        return UserRequest.class;
     }
 
     @Override

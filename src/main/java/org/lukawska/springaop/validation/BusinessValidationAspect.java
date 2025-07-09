@@ -22,7 +22,8 @@ public class BusinessValidationAspect {
     @Around("@annotation(org.lukawska.springaop.validation.BusinessValidation)")
     public Object applyBusinessValidation(ProceedingJoinPoint joinPoint) throws Throwable {
         MethodSignature methodSignature = (MethodSignature) joinPoint.getSignature();
-        BusinessValidation businessValidation = methodSignature.getMethod().getAnnotation(BusinessValidation.class);
+        BusinessValidation businessValidation = methodSignature.getMethod()
+            .getAnnotation(BusinessValidation.class);
 
         if (joinPoint.getArgs().length == 0) {
             log.warn("Annotated method {} has no arguments to validate.", methodSignature.getName());
@@ -42,7 +43,6 @@ public class BusinessValidationAspect {
         );
 
         log.debug("Business validation successful for method: {}", methodSignature.getName());
-
 
         return joinPoint.proceed();
     }

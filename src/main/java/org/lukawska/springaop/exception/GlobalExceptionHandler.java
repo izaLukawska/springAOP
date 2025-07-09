@@ -1,6 +1,8 @@
 package org.lukawska.springaop.exception;
 
 import org.lukawska.springaop.validation.BusinessValidationException;
+import org.lukawska.springaop.validation.ErrorResponse;
+import org.lukawska.springaop.validation.ValidationError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -12,8 +14,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -33,17 +36,27 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> handleValidationExceptions(MethodArgumentNotValidException ex) {
+    public ResponseEntity<ErrorResponse> handleValidationExceptions(MethodArgumentNotValidException ex,
+                                                                    WebRequest request) {
+
         log.warn("MethodArgumentNotValidException caught: {}", ex.getMessage());
-        Map<String, String> errors = new HashMap<>();
 
-        ex.getBindingResult().getAllErrors().forEach(error -> {
-            String fieldName = ((FieldError) error).getField();
-            String message = error.getDefaultMessage();
-            errors.put(fieldName, message);
-        });
+        List<ValidationError> validationErrors = ex.getBindingResult().getAllErrors().stream()
+            .filter(error -> error instanceof FieldError)
+            .map(error -> (FieldError) error)
+            .map(fieldError ->
+                new ValidationError(fieldError.getField(), fieldError.getDefaultMessage()))
+            .collect(Collectors.toList());
 
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
+        ErrorResponse errorResponse = ErrorResponse.builder()
+            .timestamp(LocalDateTime.now())
+            .status(HttpStatus.BAD_REQUEST.value())
+            .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+            .message("Validation failed for input data.")
+            .path(request.getDescription(false).replace("uri=", ""))
+            .validationErrors(validationErrors).build();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
     @ExceptionHandler(BusinessValidationException.class)

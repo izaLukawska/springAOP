@@ -1,7 +1,7 @@
 package org.lukawska.springaop.validation.validators;
 
 import lombok.RequiredArgsConstructor;
-import org.lukawska.springaop.entity.User;
+import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.repository.UserRepository;
 import org.lukawska.springaop.validation.BusinessValidator;
 import org.lukawska.springaop.validation.ValidationError;
@@ -13,12 +13,12 @@ import java.util.Objects;
 
 @Component("validateUsername")
 @RequiredArgsConstructor
-public class ValidateUsernameValidator implements BusinessValidator<User> {
+public class ValidateUsernameValidator implements BusinessValidator<UserRequest> {
 
     private final UserRepository userRepository;
 
     @Override
-    public List<ValidationError> validate(User targetUser) {
+    public List<ValidationError> validate(UserRequest targetUser) {
         List<ValidationError> errors = new ArrayList<>();
 
         if (targetUser == null) {
@@ -26,10 +26,10 @@ public class ValidateUsernameValidator implements BusinessValidator<User> {
             return errors;
         }
 
-        if (Objects.isNull(targetUser.getUsername()) || targetUser.getUsername().trim().isEmpty()) {
+        if (Objects.isNull(targetUser.username()) || targetUser.username().trim().isEmpty()) {
             errors.add(new ValidationError("username", "Username must not be blank."));
-        } else if (userRepository.existsByUsername(targetUser.getUsername())) {
-            errors.add(new ValidationError("username", "Username taken: " + targetUser.getUsername()));
+        } else if (userRepository.existsByUsername(targetUser.username())) {
+            errors.add(new ValidationError("username", "Username taken: " + targetUser.username()));
         }
 
         return errors;
@@ -37,8 +37,8 @@ public class ValidateUsernameValidator implements BusinessValidator<User> {
 
 
     @Override
-    public Class<User> supports() {
-        return User.class;
+    public Class<UserRequest> supports() {
+        return UserRequest.class;
     }
 
     @Override
