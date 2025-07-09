@@ -17,10 +17,23 @@ public class UserService {
 
     private final UserRepository repository;
 
+    /**
+     * Method used to retrieve User from the repository.
+     * @param id The id of the user we want to retrieve.
+     * @return User mapped to UserResponse (DTO)
+     * @throws UserNotFoundException when no such user exists.
+     */
     public UserResponse getUserById(Long id) {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
+    /**
+     * Method to create a new user.
+     * The method also applies BusinessValidation validation via the annotation @BusinessValidation.
+     * @param request Take the request to map it to UserResponse.
+     * @return Created User or UserAlreadyExistsException.
+     * @throws UserAlreadyExistsException If a user with the same unique details (like username or email) already exists.
+     */
     @BusinessValidation(rules = {"validateUsername", "validateEmail", "validateAge"}, failFast = false)
     public UserResponse createUser(UserRequest request) {
         try {
@@ -30,6 +43,11 @@ public class UserService {
         }
     }
 
+    /**
+     * Method to delete user.
+     * Throws UserNotFoundException if no such user exists.
+     * @param id The id of the user we want to delete.
+     */
     public void deleteUserById(Long id) {
         if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);

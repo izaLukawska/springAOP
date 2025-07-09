@@ -19,6 +19,15 @@ public class BusinessValidationAspect {
 
     private final BusinessValidationService validationService;
 
+    /**
+     * Method to run business validation and checks methods annotated with @BusinessValidation.
+     * It takes the first argument passed into the method and uses BusinessValidationService to check it.
+     * If any error occurs, then an error is thrown.
+     * @param joinPoint This is like the exact moment our method is about to run.
+     * @return Continues with the original method after validation.
+     * @throws Throwable If anything goes wrong, like validation fails or the original method has an issue.
+     */
+
     @Around("@annotation(org.lukawska.springaop.validation.BusinessValidation)")
     public Object applyBusinessValidation(ProceedingJoinPoint joinPoint) throws Throwable {
         MethodSignature methodSignature = (MethodSignature) joinPoint.getSignature();
