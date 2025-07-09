@@ -84,6 +84,5 @@ public class BusinessValidationService {
         }
 
         log.info("Validation completed for object of type {}", targetClass.getName());
-
     }
 }
