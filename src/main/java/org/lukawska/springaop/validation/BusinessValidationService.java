@@ -2,7 +2,6 @@ package org.lukawska.springaop.validation;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -16,19 +15,15 @@ public class BusinessValidationService {
 
     private final Map<Class<?>, Map<String, BusinessValidator<?>>> validatorsMap;
 
-    public BusinessValidationService(ApplicationContext applicationContext) {
-        @SuppressWarnings("rawtypes")
-        Map<String, BusinessValidator> beans = applicationContext.getBeansOfType(BusinessValidator.class);
-
-        this.validatorsMap = beans.values().stream()
-            .map(validator -> (BusinessValidator<?>) validator)
+    public BusinessValidationService(List<BusinessValidator<?>> validators) {
+        this.validatorsMap = validators.stream()
             .collect(Collectors.groupingBy(BusinessValidator::supports,
                 Collectors.toMap(BusinessValidator::getRuleName, Function.identity(),
                     (existing, replacement) -> existing
                 )
             ));
 
-        log.info("Loaded {} business validators grouped by target type and rule name.", beans.size());
+        log.info("Loaded {} validators grouped by type and rule name.", validators.size());
     }
 
     public <T> void validate(T target, boolean failFast, String[] ruleNames, String customErrorMessage) {
