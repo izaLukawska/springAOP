@@ -63,9 +63,10 @@ public class BusinessValidationService {
             return;
         }
 
-        Set<String> rulesToExecute = (ruleNames != null && ruleNames.length > 0)
-            ? Arrays.stream(ruleNames).collect(Collectors.toSet())
-            : specificTypeValidators.keySet();
+        List<String> rulesToExecute = (ruleNames != null && ruleNames.length > 0)
+            ? Arrays.asList(ruleNames)
+            : new ArrayList<>(specificTypeValidators.keySet());
+
 
         log.info("Running rules: {}", rulesToExecute);
 
