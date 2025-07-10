@@ -15,8 +15,6 @@ public @interface SmartCache {
 
     int ttlSeconds() default 10;
 
-    String[] dependsOn() default {};
-
     boolean useWeakReference() default false;
 }
 

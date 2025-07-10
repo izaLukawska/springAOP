@@ -19,9 +19,7 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.DigestUtils;
 
-import java.util.Map;
-import java.util.Set;
-import java.util.WeakHashMap;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 @Aspect
@@ -113,7 +111,7 @@ public class SmartCachingAspect {
                 namedLocalCache.put(cacheKey, result);
                 log.info("Redis and Local WeakRef cache for key: {} in cache: {}", cacheKey, cacheName);
             } else {
-                log.info("Redis only cache for key: {} in cache: {}", cacheKey, cacheName);
+                log.info("Redis cache for key: {} in cache: {}", cacheKey, cacheName);
             }
         } else {
             log.info("Method returned null for key: {}. Not caching null result.", cacheKey);
@@ -123,37 +121,86 @@ public class SmartCachingAspect {
     }
 
     /**
-     * Method used to evict cache entries after a method annotated with {@code @InvalidateCache} is executed.
-     * It identifies cache keys in Redis that match a specified pattern and removes them.
-     * It also attempts to invalidate matching keys from the local in-memory cache.
-     * Additionally, it triggers invalidation for other caches specified in the {@code dependsOn} attribute.
-     *
-     * @param invalidateCache The {@link InvalidateCache} annotation instance,
-     *                        providing the {@code keyPattern} for eviction and optionally {@code dependsOn} caches.
+     * Method to evict the cache entries after executing method annotated with {@code @InvalidateCache}.
+     * It allows eviction by a specific key pattern or by cache names and removes them from Redis and the local
+     * in-memory cache. After performing the eviction, it also triggers eviction for dependent caches.
+     * @param invalidateCache The {@link InvalidateCache} annotation instance.
      */
     @After("@annotation(invalidateCache)")
     public void evictCache(InvalidateCache invalidateCache) {
-        String pattern = invalidateCache.keyPattern();
-        log.info("Attempting to evict cache keys matching pattern: '{}'.", pattern);
+        Set<String> patternsToEvict = new HashSet<>();
+        Arrays.stream(invalidateCache.cacheNames()).forEach(cache -> patternsToEvict.add(cache + ":*"));
 
-        Set<String> keysToEvict = redisTemplate.keys(pattern);
-
-        if (!keysToEvict.isEmpty()) {
-            Long deletedCount = redisTemplate.delete(keysToEvict);
-            log.info("Evicted {} keys from Redis matching pattern: {}", deletedCount, pattern);
-
-            for(String key : keysToEvict){
-                String cacheName = getCacheNameFromKey(key);
-                if (cacheName != null) {
-                    invalidateLocalCache(cacheName, key);
-                } else {
-                    log.warn("Could not derive cache name from key {} ", key);
-                }
-            }
-        } else {
-            log.info("No keys found to evict for pattern: '{}'.", pattern);
+        if (!invalidateCache.keyPattern().isEmpty()) {
+            patternsToEvict.add(invalidateCache.keyPattern());
         }
 
+        if (patternsToEvict.isEmpty()) {
+            log.info("No cache names or key patterns specified for eviction. Nothing to evict.");
+            return;
+        }
+
+        patternsToEvict.forEach(pattern -> {
+            log.info("Attempting to evict cache keys matching pattern: '{}'.", pattern);
+
+            Set<String> keysToEvict = redisTemplate.keys(pattern);
+
+            if (!keysToEvict.isEmpty()) {
+                Long deletedCount = redisTemplate.delete(keysToEvict);
+                log.info("Evicted {} keys from Redis matching pattern: '{}'.", deletedCount, pattern);
+
+                for(String key : keysToEvict){
+                    String cacheName = getCacheNameFromKey(key);
+                    if (cacheName != null) {
+                        invalidateLocalCache(cacheName, key);
+                    } else {
+                        log.warn("Could not derive cache name from key {}", key);
+                    }
+                }
+            } else {
+                log.info("No keys found to evict for pattern: '{}'.", pattern);
+            }
+        });
+
+        evictDependentCache(invalidateCache.dependsOn());
+    }
+
+    /**
+     * Helper method to evict keys from dependent caches by their names.
+     * This method is called after a main cache invalidation to maintain data consistency
+     * across related cached data.
+     * For each cache name provided in the {@code dependentCacheNames} array:
+     * 1. It constructs a pattern to match all keys within that specific cache (e.g., "cacheName:*").
+     * 2. It then retrieves all matching keys from Redis.
+     * 3. These keys are deleted from Redis.
+     * 4. Corresponding keys evicted from the local in-memory {@link WeakHashMap} for immediate consistency.
+     *
+     * @param dependentCacheNames An array of cache names whose entries need to be invalidated.
+     */
+    private void evictDependentCache(String[] dependentCacheNames) {
+        if (dependentCacheNames == null || dependentCacheNames.length == 0) {
+            return;
+        }
+
+        log.info("Invalidation for dependent caches: {}", String.join(", ", dependentCacheNames));
+
+        for(String cacheName : dependentCacheNames){
+            String dependentPattern = cacheName + ":*";
+            log.info("Evicting dependent cache keys for cache {}", cacheName);
+
+            Set<String> dependentKeysToEvict = redisTemplate.keys(dependentPattern);
+
+            if (!dependentKeysToEvict.isEmpty()) {
+                Long deletedDependentCount = redisTemplate.delete(dependentKeysToEvict);
+                log.info("Evicted {} keys from Redis for dependent cache '{}'.",
+                    deletedDependentCount, cacheName);
+                for (String key : dependentKeysToEvict) {
+                    invalidateLocalCache(cacheName, key);
+                }
+            } else {
+                log.info("No keys found to evict for dependent cache {} ", cacheName);
+            }
+        }
     }
 
     /**

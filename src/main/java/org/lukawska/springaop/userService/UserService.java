@@ -1,6 +1,8 @@
 package org.lukawska.springaop.userService;
 
 import lombok.RequiredArgsConstructor;
+import org.lukawska.springaop.cache.InvalidateCache;
+import org.lukawska.springaop.cache.SmartCache;
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.dto.UserResponse;
 import org.lukawska.springaop.entity.User;
@@ -16,10 +18,12 @@ public class UserService {
 
     private final UserRepository repository;
 
+    @SmartCache(cacheName = "users", key = "#id", ttlSeconds = 3600, useWeakReference = true)
     public UserResponse getUserById(Long id) {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
+    @InvalidateCache(cacheNames = {"users"})
     public UserResponse createUser(UserRequest request) {
         try {
             return mapToResponse(repository.save(mapToUser(request)));
@@ -28,6 +32,7 @@ public class UserService {
         }
     }
 
+    @InvalidateCache(cacheNames = {"users"})
     public void deleteUserById(Long id) {
         if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);

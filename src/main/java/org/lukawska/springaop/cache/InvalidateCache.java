@@ -13,6 +13,8 @@ public @interface InvalidateCache {
 
     String keyPattern() default "*";
 
+    String[] dependsOn() default {};
+
     boolean async() default true;
 
 }
