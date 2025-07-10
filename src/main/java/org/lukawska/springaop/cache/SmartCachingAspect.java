@@ -7,8 +7,6 @@ import org.aspectj.lang.annotation.After;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.cache.Cache;
-import org.springframework.cache.CacheManager;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -19,7 +17,11 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
 import org.springframework.util.DigestUtils;
 
-import java.util.*;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 @Aspect
@@ -28,262 +30,122 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class SmartCachingAspect {
 
-    private final CacheManager cacheManager;
-
     private final RedisTemplate<String, Object> redisTemplate;
+
+    private final ExpressionParser expressionParser = new SpelExpressionParser();
 
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
 
-    private final Map<String, Map<String, Object>> localWeakRefCache = new WeakHashMap<>();
+    private final ConcurrentHashMap<String, WeakReference<Object>> localCache;
+
+    private final AsyncCacheInvalidator asyncCacheInvalidator;
 
     /**
-     * This is the core Around advice for caching operations. It intercepts method calls annotated with
-     * {@link SmartCache} to provide caching functionality.
-     * Method implements a two-level caching strategy prioritizing a local in-memory cache (using weak references)
-     * before checking Redis for performance optimization.
-     * Steps:
-     * 1. Generates a unique cache key based on method signature, arguments, and optional SpEL expression.
-     * 2. Attempts to retrieve the cached value from the local in-memory cache (a {@link WeakHashMap}).
-     * 3. For Local Cache HIT, then the value is returned immediately
-     * (bypassing Redis and the original method execution).
-     * 4. For Local Cache MISS, then checks the Redis Cache and retrieves the appropriate cache instance from
-     * {@link CacheManager} and attempts to retrieve the cached value from Redis using the generated cache key.
-     * 5. For Redis Cache HIT it checks if the cached entry in Redis is still valid using
-     * {@link #isCacheValid(String)}.
-     * If the value is valid, it is retrieved from Redis and if {@code smartCache.useWeakReference()} is true it's
-     * stored in the local cache for future rapid access, and then returned. Otherwise, it's evicted from Redis.
-     * 6. For Redis Cache MISS (not found locally, or Redis entry was expired/ not found) then
-     * The original intercepted method is executed via {@link ProceedingJoinPoint#proceed()}. If the method returns a
-     * non-null result, this result is cached in both Redis (with TTL set by
-     * {@link #setCacheTTL(String, long)}).
-     * If {@code smartCache.useWeakReference()} is true, the result is also cached in the local in-memory cache.
-     * 7. Returning the result (either from cache or method execution).
+     * Main aspect handling the {@code @SmartCache} annotation.
+     * It's responsible for retrieving data from the cache (local or Redis)
+     * and saving it to the cache if the data wasn't found.
      *
-     * @param pjp        The {@link ProceedingJoinPoint} representing the intercepted method execution.
-     *                   Allows proceeding with the original method or returning a cached value.
-     * @param smartCache The {@link SmartCache} annotation instance found on the intercepted method,
-     *                   providing caching configuration details (cache name, key, TTL).
-     * @return The result of the cached operation, either from the cache or from the original method execution.
-     * @throws Throwable If the original method execution throws an exception.
+     * @param pjp        The {@link ProceedingJoinPoint} object to continue method execution.
+     * @param smartCache The {@code @SmartCache} annotation with its parameters.
+     * @return The return value of the method, originating either from the cache or from the actual method execution.
+     * @throws Throwable If an error occurs during method execution.
      */
     @Around("@annotation(smartCache)")
-    public Object handleCaching(ProceedingJoinPoint pjp, SmartCache smartCache) throws Throwable {
-        String cacheKey = generateCacheKey(pjp, smartCache);
-        String cacheName = smartCache.cacheName();
+    public Object cacheMethod(ProceedingJoinPoint pjp, SmartCache smartCache) throws Throwable {
+        String cacheKey = generateSmartCacheKey(pjp, smartCache.key(), smartCache.cacheName());
 
-        log.info("Cache operation for key: {} on cache: {}", cacheKey, cacheName);
-
-        Map<String, Object> namedLocalCache = localWeakRefCache.computeIfAbsent(cacheName, k -> new WeakHashMap<>());
-        Object localResult = namedLocalCache.get(cacheKey);
-
-        if (localResult != null) {
-            log.info("Local Cache HIT for key: {} in cache: {}", cacheKey, cacheName);
-            return localResult;
+        Object cachedValue = getFromLocalCache(cacheKey);
+        if (cachedValue != null) {
+            log.info("Cache HIT (local) for key: {}'", cacheKey);
+            return cachedValue;
         }
 
-        Cache cache = cacheManager.getCache(cacheName);
-        if (cache == null) {
-            log.error("Cache does not exist: {}", cacheName);
-            throw new IllegalStateException("Cache doesn't exist: " + cacheName);
+        cachedValue = redisTemplate.opsForValue().get(cacheKey);
+        if (cachedValue != null) {
+            log.info("Cache HIT (Redis) for key: {}", cacheKey);
+            putInLocalCache(cacheKey, cachedValue);
+            return cachedValue;
         }
 
-        Cache.ValueWrapper wrapper = cache.get(cacheKey);
+        log.info("Cache MISS for key: {} ", cacheKey);
 
-        if (wrapper != null) {
-            if (isCacheValid(cacheKey)) {
-                Object redisResult = wrapper.get();
-                log.info("Cache HIT valid for key: {} in cache: {}", cacheKey, cacheName);
-                namedLocalCache.put(cacheKey, redisResult);
-                return redisResult;
-            } else {
-                log.info("Cache HIT expired for key:'{} in cache: {}", cacheKey, cacheName);
-                cache.evict(cacheKey);
-            }
-        }
-
-        log.info("Cache MISS for key: {} in cache: {}. Executing method.", cacheKey, cacheName);
         Object result = pjp.proceed();
 
         if (result != null) {
-            cache.put(cacheKey, result);
-            setCacheTTL(cacheKey, smartCache.ttlSeconds());
-            if (smartCache.useWeakReference()) {
-                namedLocalCache.put(cacheKey, result);
-                log.info("Redis and Local WeakRef cache for key: {} in cache: {}", cacheKey, cacheName);
-            } else {
-                log.info("Redis cache for key: {} in cache: {}", cacheKey, cacheName);
-            }
-        } else {
-            log.info("Method returned null for key: {}. Not caching null result.", cacheKey);
+            redisTemplate.opsForValue().set(cacheKey, result, smartCache.ttlSeconds(), TimeUnit.SECONDS);
+            log.info("Cached result in Redis for key: {}', with TTL: {} s", cacheKey, smartCache.ttlSeconds());
+            putInLocalCache(cacheKey, result);
+            log.info("Cached result in local cache for key: {}'", cacheKey);
         }
 
         return result;
     }
 
     /**
-     * Method to evict the cache entries after executing method annotated with {@code @InvalidateCache}.
-     * It allows eviction by a specific key pattern or by cache names and removes them from Redis and the local
-     * in-memory cache. After performing the eviction, it also triggers eviction for dependent caches.
-     * @param invalidateCache The {@link InvalidateCache} annotation instance.
+     * Aspect handling the {@code @InvalidateCache.} annotation
+     * used to asynchronous keys eviction in Redis and local cache.
+     *
+     * @param invalidateCache @InvalidateCache annotation with parameters.
      */
     @After("@annotation(invalidateCache)")
     public void evictCache(InvalidateCache invalidateCache) {
-        Set<String> patternsToEvict = new HashSet<>();
-        Arrays.stream(invalidateCache.cacheNames()).forEach(cache -> patternsToEvict.add(cache + ":*"));
+        Set<String> patternsToEvict = new java.util.HashSet<>();
+
+        Arrays.stream(invalidateCache.cacheNames())
+            .forEach(cacheName -> patternsToEvict.add(cacheName + ":*"));
 
         if (!invalidateCache.keyPattern().isEmpty()) {
             patternsToEvict.add(invalidateCache.keyPattern());
         }
 
-        if (patternsToEvict.isEmpty()) {
-            log.info("No cache names or key patterns specified for eviction. Nothing to evict.");
+        if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
+            log.info("Skipping due to no cache name or pattern found.");
             return;
         }
 
-        patternsToEvict.forEach(pattern -> {
-            log.info("Attempting to evict cache keys matching pattern: '{}'.", pattern);
-
-            Set<String> keysToEvict = redisTemplate.keys(pattern);
-
-            if (!keysToEvict.isEmpty()) {
-                Long deletedCount = redisTemplate.delete(keysToEvict);
-                log.info("Evicted {} keys from Redis matching pattern: '{}'.", deletedCount, pattern);
-
-                for(String key : keysToEvict){
-                    String cacheName = getCacheNameFromKey(key);
-                    if (cacheName != null) {
-                        invalidateLocalCache(cacheName, key);
-                    } else {
-                        log.warn("Could not derive cache name from key {}", key);
-                    }
-                }
-            } else {
-                log.info("No keys found to evict for pattern: '{}'.", pattern);
-            }
-        });
-
-        evictDependentCache(invalidateCache.dependsOn());
-    }
-
-    /**
-     * Helper method to evict keys from dependent caches by their names.
-     * This method is called after a main cache invalidation to maintain data consistency
-     * across related cached data.
-     * For each cache name provided in the {@code dependentCacheNames} array:
-     * 1. It constructs a pattern to match all keys within that specific cache (e.g., "cacheName:*").
-     * 2. It then retrieves all matching keys from Redis.
-     * 3. These keys are deleted from Redis.
-     * 4. Corresponding keys evicted from the local in-memory {@link WeakHashMap} for immediate consistency.
-     *
-     * @param dependentCacheNames An array of cache names whose entries need to be invalidated.
-     */
-    private void evictDependentCache(String[] dependentCacheNames) {
-        if (dependentCacheNames == null || dependentCacheNames.length == 0) {
-            return;
+        if (!patternsToEvict.isEmpty()) {
+            asyncCacheInvalidator.invalidatePatternsAsync(patternsToEvict);
         }
 
-        log.info("Invalidation for dependent caches: {}", String.join(", ", dependentCacheNames));
-
-        for(String cacheName : dependentCacheNames){
-            String dependentPattern = cacheName + ":*";
-            log.info("Evicting dependent cache keys for cache {}", cacheName);
-
-            Set<String> dependentKeysToEvict = redisTemplate.keys(dependentPattern);
-
-            if (!dependentKeysToEvict.isEmpty()) {
-                Long deletedDependentCount = redisTemplate.delete(dependentKeysToEvict);
-                log.info("Evicted {} keys from Redis for dependent cache '{}'.",
-                    deletedDependentCount, cacheName);
-                for (String key : dependentKeysToEvict) {
-                    invalidateLocalCache(cacheName, key);
-                }
-            } else {
-                log.info("No keys found to evict for dependent cache {} ", cacheName);
-            }
+        if (invalidateCache.dependsOn().length > 0) {
+            asyncCacheInvalidator.invalidateDependentCachesAsync(invalidateCache.dependsOn());
         }
     }
 
     /**
-     * Invalidates a specific key in the local in-memory WeakHashMap cache for a given cache name.
-     * This ensures consistency between Redis and the local cache when an entry is evicted.
+     * Generates the final cache key. It first creates a default key based on the method signature and arguments.
+     * If a SpEL expression is provided in the @SmartCache annotation, it attempts to evaluate it
+     * and use that result to override the default key's suffix.
+     * The final key is always prefixed with the cache name, and then MD5 hashed for uniqueness and brevity.
      *
-     * @param cacheName The name of the cache (e.g., "users") from which to evict the key.
-     * @param cacheKey  The full Redis key (e.g., "users:12345") to evict from the local cache.
+     * @param pjp            The ProceedingJoinPoint of the method.
+     * @param spelExpression The SpEL expression from the @SmartCache annotation (can be empty).
+     * @param cacheName      The name of the cache.
+     * @return The final, unique cache key.
      */
-    private void invalidateLocalCache(String cacheName, String cacheKey) {
-        Map<String, Object> namedLocalCache = localWeakRefCache.get(cacheName);
-        if (namedLocalCache != null) {
-            Object removed = namedLocalCache.remove(cacheKey);
-            if (removed != null) {
-                log.debug("Evicted key '{}' from local cache '{}'.", cacheKey, cacheName);
-            }
-        }
-    }
+    private String generateSmartCacheKey(ProceedingJoinPoint pjp, String spelExpression, String cacheName) {
+        String keySuffix = generateDefaultKeySuffix(pjp);
 
-    /**
-     * Helper method for targeting local cache invalidation.
-     * Extracts the cache name from a given Redis cache key, assuming the format "cacheName:hashedKey".
-     *
-     * @param cacheKey The full Redis key (e.g., "users:12345").
-     * @return The extracted cache name (e.g., "users"), or null if the format is unexpected.
-     */
-    private String getCacheNameFromKey(String cacheKey) {
-        int colonIndex = cacheKey.indexOf(":");
-        return colonIndex > 0 ? cacheKey.substring(0, colonIndex) : null;
-    }
-
-    /**
-     * Generates a unique cache key for a method invocation, incorporating the cache name and an optional SpEL
-     * expression.
-     * This key is used to store and retrieve values from both Redis and the local in-memory cache.
-     * Steps:
-     * 1. Building a base key string from the method's short signature and its arguments.
-     * 2. If a SpEL {@code keyExpression} is provided in {@link SmartCache}, it attempts to evaluate it.
-     * If evaluation is successful, the result of the SpEL expression becomes the base key string.
-     * In case of a SpEL evaluation error, it falls back to the default key generated in step 1.
-     * 3. The final base key string is then hashed using MD5 for consistency.
-     * 4. The resulting MD5 hash is prefixed with the {@code cacheName} (e.g., "users:hashedKey") to ensure
-     * keys are uniquely identifiable per cache and to facilitate targeted invalidation.
-     *
-     * @param pjp        The {@link ProceedingJoinPoint} representing the intercepted method execution,
-     *                   providing access to method signature and arguments.
-     * @param smartCache The {@link SmartCache} annotation instance, which supplies the
-     *                   {@code cacheName} and an optional {@code key} (SpEL expression).
-     * @return A unique, hashed cache key prefixed with the cache's name (e.g., "cacheName: md5hash").
-     */
-    private String generateCacheKey(ProceedingJoinPoint pjp, SmartCache smartCache) {
-        log.debug("Generating smart cache key for method: '{}'.", pjp.getSignature().toShortString());
-
-        String keyString = generateCacheKey(pjp);
-
-        String keyExpression = smartCache.key();
-
-        if (!keyExpression.isEmpty()) {
+        if (!spelExpression.isEmpty()) {
             try {
-                keyString = evaluateSpEL_Expression(keyExpression, pjp);
-                log.debug("Generated key using SpEL expression {}: {}.", keyExpression, keyString);
+                keySuffix = evaluateSpelExpression(pjp, spelExpression);
             } catch (Exception e) {
-                log.error("Failed to evaluate SpEL expression {} for method '{}. Error: {}",
-                    keyExpression, pjp.getSignature().toShortString(), e.getMessage());
-                keyString = generateCacheKey(pjp);
+                log.error("Using default key due to failed SpEL evaluation: '{}' for method '{}'. Error: {}",
+                    spelExpression, pjp.getSignature().toShortString(), e.getMessage());
             }
         }
 
-        String hashedKey = DigestUtils.md5DigestAsHex(keyString.getBytes());
-        return smartCache.cacheName() + ":" + hashedKey;
+        return cacheName + ":" + DigestUtils.md5DigestAsHex(keySuffix.getBytes());
     }
 
     /**
-     * Default unique cache key generator based on the method's signature and its arguments.
-     * Converts the resulting concatenated string into an MD5 hash for compact representation.
+     * Generates a default key suffix based on the method's short signature and its arguments.
+     * This is used when no SpEL expression is provided or when SpEL evaluation fails.
      *
-     * @param pjp The {@link ProceedingJoinPoint} instance representing the intercepted method invocation.
-     *            Used to extract method signature and arguments for key generation.
-     * @return A {@link String} representing the generated cache key in MD5 hash format.
+     * @param pjp The ProceedingJoinPoint of the method.
+     * @return The default key suffix string.
      */
-    private String generateCacheKey(ProceedingJoinPoint pjp) {
-        log.info("Generating smart cache key for method: '{}'.", pjp.getSignature().toShortString());
-
+    private String generateDefaultKeySuffix(ProceedingJoinPoint pjp) {
         StringBuilder keyBuilder = new StringBuilder();
         keyBuilder.append(pjp.getSignature().toShortString());
 
@@ -293,26 +155,25 @@ public class SmartCachingAspect {
                 keyBuilder.append(":").append(arg);
             }
         }
-
-        return DigestUtils.md5DigestAsHex(keyBuilder.toString().getBytes());
+        return keyBuilder.toString();
     }
 
     /**
-     * Evaluates a Spring Expression Language (SpEL) expression within the context of a method's
-     * parameters and returns the result as a string.
+     * Evaluates a SpEL expression against the method's arguments and context.
+     * This method is designed to be called within a try-catch block by the caller,
+     * as it will throw an exception if parsing or evaluation fails.
      *
-     * @param expression The SpEL expression to be evaluated. It can reference the method's parameters by name.
-     * @param pjp        The {@link ProceedingJoinPoint} instance representing the method being intercepted.
-     *                   Used to retrieve method parameter names and values.
-     * @return The result of the evaluated SpEL expression as a string.
+     * @param pjp            The ProceedingJoinPoint of the method.
+     * @param spelExpression The SpEL expression to evaluate.
+     * @return The result of the SpEL evaluation as a String.
      */
-    private String evaluateSpEL_Expression(String expression, ProceedingJoinPoint pjp) {
-        ExpressionParser parser = new SpelExpressionParser();
-        EvaluationContext context = new StandardEvaluationContext();
-
+    private String evaluateSpelExpression(ProceedingJoinPoint pjp, String spelExpression) {
         MethodSignature methodSignature = (MethodSignature) pjp.getSignature();
-        String[] parameterNames = parameterNameDiscoverer.getParameterNames(methodSignature.getMethod());
+        Method method = methodSignature.getMethod();
         Object[] args = pjp.getArgs();
+
+        EvaluationContext context = new StandardEvaluationContext();
+        String[] parameterNames = parameterNameDiscoverer.getParameterNames(method);
 
         if (parameterNames != null) {
             for(int i = 0; i < parameterNames.length; i++){
@@ -320,54 +181,33 @@ public class SmartCachingAspect {
             }
         }
 
-        return parser.parseExpression(expression).getValue(context, String.class);
+        return expressionParser.parseExpression(spelExpression).getValue(context, String.class);
+    }
+
+
+    /**
+     * Retrieves an object from the local cache using the specified key.
+     * The local cache stores values as {@link WeakReference}, allowing them to be
+     * garbage collected when they are no longer strongly referenced.
+     *
+     * @param key The key used to look up the cached object.
+     * @return The cached object associated with the provided key, or {@code null}
+     * if the key does not exist in the cache or if the reference has been cleared.
+     */
+    private Object getFromLocalCache(String key) {
+        WeakReference<Object> ref = localCache.get(key);
+        return (ref != null) ? ref.get() : null;
     }
 
     /**
-     * Sets a time-to-live (TTL) for the specified cache key. If the TTL value is greater than 0,
-     * the cache key is configured to expire after the given duration in seconds. If the TTL value is
-     * 0 or less, no expiration is set, and an informational log message is generated.
+     * Stores a key-value pair in the local cache. The value is wrapped
+     * in a {@link WeakReference} to allow for garbage collection if it is
+     * no longer strongly referenced elsewhere.
      *
-     * @param cacheKey   The Redis cache key for which the TTL is to be set.
-     * @param ttlSeconds The time-to-live duration in seconds. Must be greater than 0 to set expiration.
+     * @param key   The cache key used to reference the stored value.
+     * @param value The object to store in the local cache.
      */
-    private void setCacheTTL(String cacheKey, long ttlSeconds) {
-        if (ttlSeconds > 0) {
-            redisTemplate.expire(cacheKey, ttlSeconds, TimeUnit.SECONDS);
-            log.info("Set TTL for cache key: {} to {} seconds.", cacheKey, ttlSeconds);
-        } else {
-            log.info("TTL for cache key: {} is 0 or less; expiration not set.", cacheKey);
-        }
-    }
-
-    /**
-     * Checks whether a given cache key is valid based on its time-to-live (TTL) in Redis.
-     * Logs information or warnings about the cache key's state.
-     *
-     * @param cacheKey The Redis cache key to be checked for validity.
-     * @return {@code true} if the cache key is valid (exists with a positive TTL or no expiration);
-     * {@code false} if the cache key does not exist or has expired.
-     */
-    private boolean isCacheValid(String cacheKey) {
-        long ttl = redisTemplate.getExpire(cacheKey);
-
-        if (ttl == -2L) {
-            log.info("Cache key: {}'does not exist or has expired in Redis.", cacheKey);
-            return false;
-        }
-
-        if (ttl == -1L) {
-            log.info("Cache key exists with no expiration  set: {}", cacheKey);
-            return true;
-        }
-
-        if (ttl > 0) {
-            log.info("Cache key: {} is valid with seconds remaining: {}", cacheKey, ttl);
-            return true;
-        }
-
-        log.warn("Unexpected TTL value for cache key: '{}': {}", cacheKey, ttl);
-
-        return false;
+    private void putInLocalCache(String key, Object value) {
+        localCache.put(key, new WeakReference<>(value));
     }
 }
