@@ -25,12 +25,14 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Aspect
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class SmartCachingAspect {
+
+public class SmartCacheAspect {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -38,24 +40,15 @@ public class SmartCachingAspect {
 
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
 
-    private final ConcurrentHashMap<String, WeakReference<Object>> localCache;
+    private final ConcurrentHashMap<String, WeakReference<Object>> weakRefLocalCache;
 
-    private final AsyncCacheInvalidator asyncCacheInvalidator;
+    private final CacheInvalidator cacheInvalidator;
 
     private final CacheMetricsService cacheMetricsService;
 
-    /**
-     * Main aspect handling the {@code @SmartCache} annotation.
-     * It's responsible for retrieving data from the cache (local or Redis)
-     * and saving it to the cache if the data wasn't found.
-     *
-     * @param pjp        The {@link ProceedingJoinPoint} object to continue method execution.
-     * @param smartCache The {@code @SmartCache} annotation with its parameters.
-     * @return The return value of the method, originating either from the cache or from the actual method execution.
-     * @throws Throwable If an error occurs during method execution.
-     */
+
     @Around("@annotation(smartCache)")
-    public Object cacheMethod(ProceedingJoinPoint pjp, SmartCache smartCache) throws Throwable {
+    public Object handleCaching(ProceedingJoinPoint pjp, SmartCache smartCache) throws Throwable {
         String cacheName = smartCache.cacheName();
         String cacheKey = generateSmartCacheKey(pjp, smartCache.key(), cacheName);
         String methodName = pjp.getSignature().toShortString();
@@ -70,33 +63,35 @@ public class SmartCachingAspect {
             "redis", "Number of items put into Redis cache");
         Counter localCachePutCounter = cacheMetricsService.getCacheCounter("puts", cacheName,
             "local", "Number of items put into local cache");
-
-
         Timer methodExecutionTimer = cacheMetricsService.getMethodTimer(cacheName, methodName,
             "Duration of the method execution when cache is missed");
 
-        Object cachedValue = getFromLocalCache(cacheKey);
-        if (cachedValue != null) {
-            log.info("Cache HIT (local) for key: {}'", cacheKey);
-            localCacheHitCounter.increment();
-            return cachedValue;
+        Object cachedValue;
+
+        if (smartCache.useWeakReference()) {
+            cachedValue = getFromWeakRefLocalCache(cacheKey);
+            if (cachedValue != null) {
+                log.info("Cache HIT (local - WeakReference) for key: {}'", cacheKey);
+                localCacheHitCounter.increment();
+                return cachedValue;
+            }
         }
 
         cachedValue = redisTemplate.opsForValue().get(cacheKey);
         if (cachedValue != null) {
             log.info("Cache HIT (Redis) for key: {}", cacheKey);
             redisCacheHitCounter.increment();
-            putInLocalCache(cacheKey, cachedValue);
-            localCachePutCounter.increment();
+
+            if (smartCache.useWeakReference()) {
+                putIntoWeakRefLocalCache(cacheKey, cachedValue, localCachePutCounter);
+            }
             return cachedValue;
         }
 
         log.info("Cache MISS for key: {} ", cacheKey);
         cacheMissCounter.increment();
 
-
         Object result;
-
         result = methodExecutionTimer.recordCallable(() -> {
             try {
                 return pjp.proceed();
@@ -113,13 +108,47 @@ public class SmartCachingAspect {
             log.info("Cached result in Redis for key: {}', with TTL: {} s", cacheKey, smartCache.ttlSeconds());
             redisCachePutCounter.increment();
 
-            putInLocalCache(cacheKey, result);
-            log.info("Cached result in local cache for key: {}'", cacheKey);
-            localCachePutCounter.increment();
+            if (smartCache.useWeakReference()) {
+                putIntoWeakRefLocalCache(cacheKey, result, localCachePutCounter);
+            }
         }
 
         return result;
     }
+
+
+    /**
+     * Retrieves a value from the WeakReference local cache, handling garbage collection.
+     *
+     * @param key The cache key.
+     * @return The cached object, or null if not found or garbage collected.
+     */
+    private Object getFromWeakRefLocalCache(String key) {
+        WeakReference<Object> ref = weakRefLocalCache.get(key);
+        if (ref != null) {
+            Object value = ref.get();
+            if (value == null) {
+                weakRefLocalCache.remove(key);
+                log.debug("Local WeakReference cache entry for key: '{}' was garbage collected.", key);
+            }
+            return value;
+        }
+        return null;
+    }
+
+    /**
+     * Puts a value into the WeakReference local cache and increments the put counter.
+     *
+     * @param key        The cache key.
+     * @param value      The value to cache.
+     * @param putCounter The Micrometer counter for local cache puts.
+     */
+    private void putIntoWeakRefLocalCache(String key, Object value, Counter putCounter) {
+        weakRefLocalCache.put(key, new WeakReference<>(value));
+        log.info("Cached result in local WeakReference cache for key: {}'", key);
+        putCounter.increment();
+    }
+
 
     /**
      * Aspect handling the {@code @InvalidateCache.} annotation
@@ -130,6 +159,7 @@ public class SmartCachingAspect {
     @After("@annotation(invalidateCache)")
     public void evictCache(InvalidateCache invalidateCache) {
         Set<String> patternsToEvict = new java.util.HashSet<>();
+        boolean isAsync = invalidateCache.async();
 
         if (invalidateCache.cacheNames().length > 0) {
             String cacheNamesStr = String.join(",", invalidateCache.cacheNames());
@@ -137,9 +167,12 @@ public class SmartCachingAspect {
                     "Number of cache evictions triggered by specific cache names.")
                 .increment();
             Arrays.stream(invalidateCache.cacheNames())
-                .forEach(cacheName -> patternsToEvict.add(cacheName + ":*"));
+                .forEach(cacheName -> {
+                    patternsToEvict.add(cacheName + ":*");
+                    weakRefLocalCache.keySet().removeIf(key -> key.startsWith(cacheName + ":"));
+                    log.info("Local WeakReference cache keys matching '{}*' invalidated.", cacheName);
+                });
         }
-
 
         if (!invalidateCache.keyPattern().isEmpty()) {
             String cacheTag = inferCacheNameFromPattern(invalidateCache.keyPattern());
@@ -147,16 +180,32 @@ public class SmartCachingAspect {
                     "Number of cache evictions triggered by key patterns.")
                 .increment();
             patternsToEvict.add(invalidateCache.keyPattern());
+
+            String pattern = invalidateCache.keyPattern();
+            weakRefLocalCache.keySet().removeIf(key -> {
+                if (pattern.endsWith("*")) {
+                    return key.startsWith(pattern.substring(0, pattern.length() - 1));
+                }
+                return key.equals(pattern);
+            });
+            log.info("Local WeakReference cache keys matching pattern '{}' invalidated.", pattern);
         }
 
         if (invalidateCache.dependsOn().length > 0) {
-            Arrays.stream(invalidateCache.dependsOn()).forEach(dependentCacheName ->
+            Arrays.stream(invalidateCache.dependsOn()).forEach(dependentCacheName -> {
                 cacheMetricsService.getEvictionByDependencyCounter(dependentCacheName,
                         "Number of cache eviction triggered by dependencies.")
-                .increment());
-            asyncCacheInvalidator.invalidateDependentCachesAsync(invalidateCache.dependsOn());
-        }
+                    .increment();
+                weakRefLocalCache.keySet().removeIf(key -> key.startsWith(dependentCacheName + ":"));
+                log.info("Local WeakReference cache keys dependent on '{}' invalidated.", dependentCacheName);
+            });
 
+            if (isAsync) {
+                cacheInvalidator.invalidateDependentCachesAsync(invalidateCache.dependsOn());
+            } else {
+                cacheInvalidator.invalidateDependentCachesSync(invalidateCache.dependsOn());
+            }
+        }
 
         if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
             log.info("Skipping due to no cache name or pattern found.");
@@ -164,14 +213,14 @@ public class SmartCachingAspect {
         }
 
         if (!patternsToEvict.isEmpty()) {
-            asyncCacheInvalidator.invalidatePatternsAsync(patternsToEvict);
+            if (isAsync) {
+                cacheInvalidator.invalidatePatternsAsync(patternsToEvict);
+            } else {
+                cacheInvalidator.invalidatePatternsSync(patternsToEvict);
+            }
         }
     }
 
-    /**
-     * Helper to infer a cache name from a key pattern for metrics tagging.
-     * Very basic inference: takes the part before the first colon.
-     */
     private String inferCacheNameFromPattern(String keyPattern) {
         if (keyPattern.contains(":")) {
             return keyPattern.substring(0, keyPattern.indexOf(":"));
@@ -179,61 +228,35 @@ public class SmartCachingAspect {
         return "unknown_or_multiple";
     }
 
-    /**
-     * Generates the final cache key. It first creates a default key based on the method signature and arguments.
-     * If a SpEL expression is provided in the @SmartCache annotation, it attempts to evaluate it
-     * and use that result to override the default key's suffix.
-     * The final key is always prefixed with the cache name, and then MD5 hashed for uniqueness and brevity.
-     *
-     * @param pjp            The ProceedingJoinPoint of the method.
-     * @param spelExpression The SpEL expression from the @SmartCache annotation (can be empty).
-     * @param cacheName      The name of the cache.
-     * @return The final, unique cache key.
-     */
     private String generateSmartCacheKey(ProceedingJoinPoint pjp, String spelExpression, String cacheName) {
-        String keySuffix = generateDefaultKeySuffix(pjp);
+        MethodSignature methodSignature = (MethodSignature) pjp.getSignature();
+        Method method = methodSignature.getMethod();
+        Object[] args = pjp.getArgs();
+
+        StringBuilder keyBuilder = new StringBuilder();
+        keyBuilder.append(method.getName());
+        if (args != null && args.length > 0) {
+            keyBuilder.append(":");
+            keyBuilder.append(
+                Arrays.stream(args)
+                    .map(arg -> arg != null ? arg.toString() : "null")
+                    .collect(Collectors.joining("-"))
+            );
+        }
+        String keySuffix = keyBuilder.toString();
 
         if (!spelExpression.isEmpty()) {
             try {
                 keySuffix = evaluateSpelExpression(pjp, spelExpression);
             } catch (Exception e) {
                 log.error("Using default key due to failed SpEL evaluation: '{}' for method '{}'. Error: {}",
-                    spelExpression, pjp.getSignature().toShortString(), e.getMessage());
+                    spelExpression, method.getName(), e.getMessage());
             }
         }
 
         return cacheName + ":" + DigestUtils.md5DigestAsHex(keySuffix.getBytes());
     }
 
-    /**
-     * Generates a default key suffix based on the method's short signature and its arguments.
-     * This is used when no SpEL expression is provided or when SpEL evaluation fails.
-     *
-     * @param pjp The ProceedingJoinPoint of the method.
-     * @return The default key suffix string.
-     */
-    private String generateDefaultKeySuffix(ProceedingJoinPoint pjp) {
-        StringBuilder keyBuilder = new StringBuilder();
-        keyBuilder.append(pjp.getSignature().toShortString());
-
-        Object[] args = pjp.getArgs();
-        for(Object arg : args){
-            if (arg != null) {
-                keyBuilder.append(":").append(arg);
-            }
-        }
-        return keyBuilder.toString();
-    }
-
-    /**
-     * Evaluates a SpEL expression against the method's arguments and context.
-     * This method is designed to be called within a try-catch block by the caller,
-     * as it will throw an exception if parsing or evaluation fails.
-     *
-     * @param pjp            The ProceedingJoinPoint of the method.
-     * @param spelExpression The SpEL expression to evaluate.
-     * @return The result of the SpEL evaluation as a String.
-     */
     private String evaluateSpelExpression(ProceedingJoinPoint pjp, String spelExpression) {
         MethodSignature methodSignature = (MethodSignature) pjp.getSignature();
         Method method = methodSignature.getMethod();
@@ -249,32 +272,5 @@ public class SmartCachingAspect {
         }
 
         return expressionParser.parseExpression(spelExpression).getValue(context, String.class);
-    }
-
-
-    /**
-     * Retrieves an object from the local cache using the specified key.
-     * The local cache stores values as {@link WeakReference}, allowing them to be
-     * garbage collected when they are no longer strongly referenced.
-     *
-     * @param key The key used to look up the cached object.
-     * @return The cached object associated with the provided key, or {@code null}
-     * if the key does not exist in the cache or if the reference has been cleared.
-     */
-    private Object getFromLocalCache(String key) {
-        WeakReference<Object> ref = localCache.get(key);
-        return (ref != null) ? ref.get() : null;
-    }
-
-    /**
-     * Stores a key-value pair in the local cache. The value is wrapped
-     * in a {@link WeakReference} to allow for garbage collection if it is
-     * no longer strongly referenced elsewhere.
-     *
-     * @param key   The cache key used to reference the stored value.
-     * @param value The object to store in the local cache.
-     */
-    private void putInLocalCache(String key, Object value) {
-        localCache.put(key, new WeakReference<>(value));
     }
 }
