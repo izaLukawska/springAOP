@@ -66,33 +66,81 @@ public class SmartCacheAspect {
         Timer methodExecutionTimer = cacheMetricsService.getMethodTimer(cacheName, methodName,
             "Duration of the method execution when cache is missed");
 
-        Object cachedValue;
-
-        if (smartCache.useWeakReference()) {
-            cachedValue = getFromWeakRefLocalCache(cacheKey);
-            if (cachedValue != null) {
-                log.info("Cache HIT (local - WeakReference) for key: {}'", cacheKey);
-                localCacheHitCounter.increment();
-                return cachedValue;
-            }
+        Object cachedValue = tryGetFromLocalCache(cacheKey, smartCache, localCacheHitCounter);
+        if (cachedValue != null) {
+            return cachedValue;
         }
 
-        cachedValue = redisTemplate.opsForValue().get(cacheKey);
+        cachedValue = tryGetFromRedis(cacheKey, smartCache, redisCacheHitCounter, localCachePutCounter);
         if (cachedValue != null) {
-            log.info("Cache HIT (Redis) for key: {}", cacheKey);
-            redisCacheHitCounter.increment();
-
-            if (smartCache.useWeakReference()) {
-                putIntoWeakRefLocalCache(cacheKey, cachedValue, localCachePutCounter);
-            }
             return cachedValue;
         }
 
         log.info("Cache MISS for key: {} ", cacheKey);
         cacheMissCounter.increment();
 
-        Object result;
-        result = methodExecutionTimer.recordCallable(() -> {
+        Object result = executeOriginalMethod(pjp, methodExecutionTimer);
+
+        if (result != null) {
+            storeResultInCaches(cacheKey, result, smartCache, redisCachePutCounter, localCachePutCounter);
+        }
+
+        return result;
+    }
+
+    /**
+     * Attempts to retrieve a value from the local WeakReference cache.
+     *
+     * @param cacheKey             The key for the cache entry.
+     * @param smartCache           The @SmartCache annotation, to check if a local cache is enabled.
+     * @param localCacheHitCounter The counter for the local cache hits.
+     * @return The cached object if found, otherwise null.
+     */
+    private Object tryGetFromLocalCache(String cacheKey, SmartCache smartCache, Counter localCacheHitCounter) {
+        if (smartCache.useWeakReference()) {
+            Object cachedValue = getFromWeakRefLocalCache(cacheKey);
+            if (cachedValue != null) {
+                log.info("Cache HIT (local - WeakReference) for key: {}'", cacheKey);
+                localCacheHitCounter.increment();
+                return cachedValue;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Attempts to retrieve a value from Redis cache. If found, potentially stores it in a local cache.
+     *
+     * @param cacheKey             The key for the cache entry.
+     * @param smartCache           The @SmartCache annotation, to check if a local cache is enabled.
+     * @param redisCacheHitCounter The counter for Redis cache hits.
+     * @param localCachePutCounter The counter for local cache puts (if data from Redis is put into the local cache).
+     * @return The cached object if found, otherwise null.
+     */
+    private Object tryGetFromRedis(String cacheKey, SmartCache smartCache,
+                                   Counter redisCacheHitCounter, Counter localCachePutCounter) {
+        Object cachedValue = redisTemplate.opsForValue().get(cacheKey);
+        if (cachedValue != null) {
+            log.info("Cache HIT (Redis) for key: {}", cacheKey);
+            redisCacheHitCounter.increment();
+            if (smartCache.useWeakReference()) {
+                putInWeakRefLocalCache(cacheKey, cachedValue, localCachePutCounter);
+            }
+            return cachedValue;
+        }
+        return null;
+    }
+
+    /**
+     * Executes the original method and measures its execution time.
+     *
+     * @param pjp                  The ProceedingJoinPoint to proceed with the method execution.
+     * @param methodExecutionTimer The timer for method execution duration.
+     * @return The result of the original method.
+     * @throws Throwable if the original method throws an exception.
+     */
+    private Object executeOriginalMethod(ProceedingJoinPoint pjp, Timer methodExecutionTimer) throws Throwable {
+        return methodExecutionTimer.recordCallable(() -> {
             try {
                 return pjp.proceed();
             } catch (Throwable t) {
@@ -102,20 +150,27 @@ public class SmartCacheAspect {
                 throw new RuntimeException("Original method execution failed with an unexpected Throwable", t);
             }
         });
-
-        if (result != null) {
-            redisTemplate.opsForValue().set(cacheKey, result, smartCache.ttlSeconds(), TimeUnit.SECONDS);
-            log.info("Cached result in Redis for key: {}', with TTL: {} s", cacheKey, smartCache.ttlSeconds());
-            redisCachePutCounter.increment();
-
-            if (smartCache.useWeakReference()) {
-                putIntoWeakRefLocalCache(cacheKey, result, localCachePutCounter);
-            }
-        }
-
-        return result;
     }
 
+    /**
+     * Stores the result in Redis cache and potentially in local cache.
+     *
+     * @param cacheKey             The key for the cache entry.
+     * @param result               The result to cache.
+     * @param smartCache           The @SmartCache annotation, for TTL and local cache settings.
+     * @param redisCachePutCounter The counter for Redis cache puts.
+     * @param localCachePutCounter The counter for the local cache puts.
+     */
+    private void storeResultInCaches(String cacheKey, Object result, SmartCache smartCache,
+                                     Counter redisCachePutCounter, Counter localCachePutCounter) {
+        redisTemplate.opsForValue().set(cacheKey, result, smartCache.ttlSeconds(), TimeUnit.SECONDS);
+        log.info("Cached result in Redis for key: {}', with TTL: {} s", cacheKey, smartCache.ttlSeconds());
+        redisCachePutCounter.increment();
+
+        if (smartCache.useWeakReference()) {
+            putInWeakRefLocalCache(cacheKey, result, localCachePutCounter);
+        }
+    }
 
     /**
      * Retrieves a value from the WeakReference local cache, handling garbage collection.
@@ -143,24 +198,33 @@ public class SmartCacheAspect {
      * @param value      The value to cache.
      * @param putCounter The Micrometer counter for local cache puts.
      */
-    private void putIntoWeakRefLocalCache(String key, Object value, Counter putCounter) {
+    private void putInWeakRefLocalCache(String key, Object value, Counter putCounter) {
         weakRefLocalCache.put(key, new WeakReference<>(value));
         log.info("Cached result in local WeakReference cache for key: {}'", key);
         putCounter.increment();
     }
 
 
-    /**
-     * Aspect handling the {@code @InvalidateCache.} annotation
-     * used to asynchronous keys eviction in Redis and local cache.
-     *
-     * @param invalidateCache @InvalidateCache annotation with parameters.
-     */
     @After("@annotation(invalidateCache)")
     public void evictCache(InvalidateCache invalidateCache) {
         Set<String> patternsToEvict = new java.util.HashSet<>();
         boolean isAsync = invalidateCache.async();
 
+        handleCacheNameInvalidation(invalidateCache, patternsToEvict);
+        handleKeyPatternInvalidation(invalidateCache, patternsToEvict);
+        handleDependentCacheInvalidation(invalidateCache, isAsync);
+
+        if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
+            log.info("Skipping eviction due to no cache name or pattern found.");
+            return;
+        }
+
+        if (!patternsToEvict.isEmpty()) {
+            dispatchPatternInvalidation(patternsToEvict, isAsync);
+        }
+    }
+
+    private void handleCacheNameInvalidation(InvalidateCache invalidateCache, Set<String> patternsToEvict) {
         if (invalidateCache.cacheNames().length > 0) {
             String cacheNamesStr = String.join(",", invalidateCache.cacheNames());
             cacheMetricsService.getEvictionByNameCounter(cacheNamesStr,
@@ -170,10 +234,12 @@ public class SmartCacheAspect {
                 .forEach(cacheName -> {
                     patternsToEvict.add(cacheName + ":*");
                     weakRefLocalCache.keySet().removeIf(key -> key.startsWith(cacheName + ":"));
-                    log.info("Local WeakReference cache keys matching '{}*' invalidated.", cacheName);
+                    log.info("Local WeakReference cache keys matching '{}*' invalidated for cache name.", cacheName);
                 });
         }
+    }
 
+    private void handleKeyPatternInvalidation(InvalidateCache invalidateCache, Set<String> patternsToEvict) {
         if (!invalidateCache.keyPattern().isEmpty()) {
             String cacheTag = inferCacheNameFromPattern(invalidateCache.keyPattern());
             cacheMetricsService.getEvictionByPatternCounter(cacheTag,
@@ -190,7 +256,9 @@ public class SmartCacheAspect {
             });
             log.info("Local WeakReference cache keys matching pattern '{}' invalidated.", pattern);
         }
+    }
 
+    private void handleDependentCacheInvalidation(InvalidateCache invalidateCache, boolean isAsync) {
         if (invalidateCache.dependsOn().length > 0) {
             Arrays.stream(invalidateCache.dependsOn()).forEach(dependentCacheName -> {
                 cacheMetricsService.getEvictionByDependencyCounter(dependentCacheName,
@@ -206,18 +274,13 @@ public class SmartCacheAspect {
                 cacheInvalidator.invalidateDependentCachesSync(invalidateCache.dependsOn());
             }
         }
+    }
 
-        if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
-            log.info("Skipping due to no cache name or pattern found.");
-            return;
-        }
-
-        if (!patternsToEvict.isEmpty()) {
-            if (isAsync) {
-                cacheInvalidator.invalidatePatternsAsync(patternsToEvict);
-            } else {
-                cacheInvalidator.invalidatePatternsSync(patternsToEvict);
-            }
+    private void dispatchPatternInvalidation(Set<String> patternsToEvict, boolean isAsync) {
+        if (isAsync) {
+            cacheInvalidator.invalidatePatternsAsync(patternsToEvict);
+        } else {
+            cacheInvalidator.invalidatePatternsSync(patternsToEvict);
         }
     }
 
