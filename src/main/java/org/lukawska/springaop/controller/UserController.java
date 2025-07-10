@@ -1,10 +1,10 @@
 package org.lukawska.springaop.controller;
 
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.dto.UserResponse;
-import org.lukawska.springaop.userService.UserService;
+import org.lukawska.springaop.service.UserService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -20,8 +20,8 @@ public class UserController {
     }
 
     @PostMapping
-    public UserResponse createUser(@RequestBody @Valid UserRequest userRequest) {
-        return userService.createUser(userRequest);
+    public ResponseEntity<UserResponse> createUser(@RequestBody UserRequest userRequest) {
+        return ResponseEntity.status(201).body(userService.createUser(userRequest));
     }
 
     @DeleteMapping("/{id}")

@@ -1,4 +1,4 @@
-package org.lukawska.springaop.userService;
+package org.lukawska.springaop.service;
 
 import lombok.RequiredArgsConstructor;
 import org.lukawska.springaop.cache.InvalidateCache;

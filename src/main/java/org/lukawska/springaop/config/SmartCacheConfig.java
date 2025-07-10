@@ -29,14 +29,14 @@ public class SmartCacheConfig {
      * ("asyncInvalidatorExecutor")).
      * To pozwala na lepszą kontrolę nad liczbą wątków i zasobami.
      */
-    @Bean(name = "asyncInvalidatorExecutor") // Nazwa puli wątków
+    @Bean(name = "asyncInvalidatorExecutor")
     public Executor asyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);    // Liczba wątków do utrzymania w puli, nawet jeśli są bezczynne
-        executor.setMaxPoolSize(5);     // Maksymalna liczba wątków, które mogą zostać utworzone
-        executor.setQueueCapacity(500); // Pojemność kolejki zadań oczekujących
-        executor.setThreadNamePrefix("CacheAsync-"); // Prefiks nazw wątków (np. "CacheAsync-1", "CacheAsync-2")
-        executor.initialize();          // Inicjalizuj pulę wątków
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("CacheAsync-");
+        executor.initialize();
         return executor;
     }
 }

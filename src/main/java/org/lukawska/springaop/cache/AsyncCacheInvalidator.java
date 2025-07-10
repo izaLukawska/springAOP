@@ -43,7 +43,7 @@ public class AsyncCacheInvalidator {
                 log.info("[ASYNC] Deleted keys from Redis: {}", deletedCount);
                 keysToEvict.forEach(localCache::remove);
             } else {
-                log.info("[ASYNC] Nie znaleziono kluczy do unieważnienia dla wzorca podstawowego: '{}'.", pattern);
+                log.info("[ASYNC] No keys to evict for pattern: {}", pattern);
             }
         });
     }
@@ -71,7 +71,7 @@ public class AsyncCacheInvalidator {
         log.info("[ASYNC] Starting invalidation for: {}", String.join(", ", dependentCacheNames));
         for(String dependentCacheName : dependentCacheNames){
             String dependentPattern = dependentCacheName + ":*";
-            log.info("[ASYNC] Processing dependent cache '{}', matching pattern: '{}'.",
+            log.info("[ASYNC] Processing dependent cache {}, matching pattern: {}.",
                 dependentCacheName, dependentPattern);
 
             Set<String> dependentKeysToEvict = redisTemplate.keys(dependentPattern);
