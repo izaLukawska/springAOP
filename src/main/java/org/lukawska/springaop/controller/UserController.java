@@ -4,7 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.dto.UserResponse;
-import org.lukawska.springaop.userService.UserService;
+import org.lukawska.springaop.service.UserService;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
