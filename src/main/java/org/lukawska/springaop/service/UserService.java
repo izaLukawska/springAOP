@@ -20,16 +20,16 @@ public class UserService {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
-    public UserResponse createUser(UserRequest request){
+    public UserResponse createUser(UserRequest request) {
         try {
             return mapToResponse(repository.save(mapToUser(request)));
-        } catch (DataIntegrityViolationException e){
+        } catch (DataIntegrityViolationException e) {
             throw new UserAlreadyExistsException();
         }
     }
 
-    public void deleteUserById(Long id){
-        if(!repository.existsById(id)){
+    public void deleteUserById(Long id) {
+        if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);
         }
 
