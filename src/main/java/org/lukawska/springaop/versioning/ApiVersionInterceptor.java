@@ -10,7 +10,6 @@ import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
-import org.springframework.web.servlet.ModelAndView;
 
 import java.util.Arrays;
 import java.util.Set;
@@ -60,27 +59,10 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
         request.setAttribute("startTime", System.currentTimeMillis());
         request.setAttribute("api.version.used", finalVersionToUse);
 
+        response.setHeader("X-API-Version", finalVersionToUse);
+        log.debug("Setting X-API-Version header {}", finalVersionToUse);
+
         return true;
-    }
-
-    @Override
-    public void postHandle(@NonNull HttpServletRequest request,
-                           @NonNull HttpServletResponse response,
-                           @NonNull Object handler,
-                           ModelAndView modelAndView) {
-
-        String usedVersion = (String) request.getAttribute("api.version.used");
-
-        if (usedVersion != null) {
-            if (!response.isCommitted()) {
-                response.setHeader("X-API-Version", usedVersion);
-                log.info("Added X-API-Version header '{}' to response for URI: {}",
-                    usedVersion, request.getRequestURI());
-            } else {
-                log.warn("Cannot add X-API-Version header. Response commited for URI: {}",
-                    request.getRequestURI());
-            }
-        }
     }
 
     @Override
