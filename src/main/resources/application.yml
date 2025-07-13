@@ -1,4 +1,8 @@
+server:
+  port: 8080
 spring:
+  application:
+    name: sprinAOP
   datasource:
     url: jdbc:h2:mem:testdb
     driver-class-name: org.h2.Driver
@@ -12,3 +16,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
+  data:
+    redis:
+      host: localhost
+      port: 6379
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
