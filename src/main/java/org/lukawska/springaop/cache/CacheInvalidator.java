@@ -35,10 +35,12 @@ public class CacheInvalidator {
 
             if (!keysToEvict.isEmpty()) {
                 Long deletedCount = redisTemplate.delete(keysToEvict);
-                log.info("[ASYNC] Deleted {} keys from Redis for pattern: {}", deletedCount, pattern);
+                log.info("[ASYNC] Deleted {} keys from Redis for pattern: {}",
+                    deletedCount, pattern);
 
                 keysToEvict.forEach(localCache::remove);
-                log.info("[ASYNC] Deleted {} keys from local WeakReference cache for pattern: {}", keysToEvict.size()
+                log.info("[ASYNC] Deleted {} keys from local cache for pattern: {}",
+                    keysToEvict.size()
                     , pattern);
             } else {
                 log.info("[ASYNC] No keys found to evict for pattern: {}", pattern);
@@ -61,7 +63,9 @@ public class CacheInvalidator {
             log.debug("[ASYNC] Skipping due to no dependent cache found.");
             return;
         }
-        log.info("[ASYNC] Starting invalidation for dependent caches: {}", String.join(", ", dependentCacheNames));
+        log.info("[ASYNC] Starting invalidation for dependent caches: {}",
+            String.join(", ", dependentCacheNames));
+
         for(String dependentCacheName : dependentCacheNames){
             String dependentPattern = dependentCacheName + ":*";
             log.info("[ASYNC] Processing dependent cache {}, matching pattern: {}.",
@@ -75,7 +79,7 @@ public class CacheInvalidator {
                     deletedDependentCount, dependentCacheName);
 
                 dependentKeysToEvict.forEach(localCache::remove);
-                log.info("[ASYNC] Deleted {} keys from local WeakReference cache for dependent cache '{}'.",
+                log.info("[ASYNC] Deleted {} keys from local cache for dependent cache '{}'.",
                     dependentKeysToEvict.size(), dependentCacheName);
             } else {
                 log.info("[ASYNC] No keys found for dependent cache '{}' matching pattern: '{}'.",
@@ -102,7 +106,8 @@ public class CacheInvalidator {
 
                 // --- Usuwanie z lokalnego cache'a WeakReference ---
                 keysToEvict.forEach(localCache::remove);
-                log.info("[SYNC] Deleted {} keys from local WeakReference cache for pattern: {}", keysToEvict.size(),
+                log.info("[SYNC] Deleted {} keys from local WeakReference cache for pattern: {}",
+                    keysToEvict.size(),
                     pattern);
             } else {
                 log.info("[SYNC] No keys found to evict for pattern: {}", pattern);
@@ -138,7 +143,7 @@ public class CacheInvalidator {
                     deletedDependentCount, dependentCacheName);
 
                 dependentKeysToEvict.forEach(localCache::remove);
-                log.info("[SYNC] Deleted {} keys from local WeakReference cache for dependent cache '{}'.",
+                log.info("[SYNC] Deleted {} keys from local cache for dependent cache '{}'.",
                     dependentKeysToEvict.size(), dependentCacheName);
             } else {
                 log.info("[SYNC] No keys found for dependent cache '{}' matching pattern: '{}'.",
