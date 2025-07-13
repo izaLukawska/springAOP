@@ -8,7 +8,6 @@ import org.lukawska.springaop.entity.User;
 import org.lukawska.springaop.exception.UserAlreadyExistsException;
 import org.lukawska.springaop.exception.UserNotFoundException;
 import org.lukawska.springaop.locking.DistributedLock;
-import org.lukawska.springaop.locking.LockStrategy;
 import org.lukawska.springaop.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -20,33 +19,35 @@ public class UserService {
 
     private final UserRepository repository;
 
-    @DistributedLock(
-        lockName = "user_lookup",
-        key = "#id",
-        waitTimeSeconds = 5,
-        leaseTimeSeconds = -1,
-        strategy = LockStrategy.WAIT_AND_RETRY,
-        fallbackMethod = "fallbackGetUserById"
-    )
     public UserResponse getUserById(Long id) {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
-    public UserResponse fallbackGetUserById(Long id){
-        log.info("Fallback: Could not acquire lock for getUserById({}).", id);
-        throw new RuntimeException("Service unavailable due to locking issues for user ID: " + id);
-    }
-
-    public UserResponse createUser(UserRequest request){
+    @DistributedLock(
+        lockName = "user_lookup",
+        key = "#request.username",
+        waitTimeSeconds = 0,
+        leaseTimeSeconds = 10,
+        fallbackMethod = "createUserFallback"
+    )
+    public UserResponse createUser(UserRequest request) {
         try {
+            Thread.sleep(5000);
             return mapToResponse(repository.save(mapToUser(request)));
-        } catch (DataIntegrityViolationException e){
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        } catch (DataIntegrityViolationException e) {
             throw new UserAlreadyExistsException();
         }
     }
 
-    public void deleteUserById(Long id){
-        if(!repository.existsById(id)){
+    public UserResponse createUserFallback(UserRequest request) {
+        return new UserResponse(99L, "fallback", "test@test.com", 30);
+    }
+
+    public void deleteUserById(Long id) {
+        if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);
         }
 

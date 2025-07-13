@@ -37,7 +37,7 @@ public class DistributedLockAspect {
                 acquired = lock.tryLock(lockAnnotation.waitTimeSeconds(),
                     lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
             } else {
-                acquired = lock.tryLock(lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
+                acquired = lock.tryLock(0, lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
             }
 
             if (acquired) {
@@ -50,18 +50,8 @@ public class DistributedLockAspect {
                 return handleLockAcquisitionFailure(joinPoint, lockAnnotation);
             }
         } finally {
-//            if (acquired) {
-//                releaseLockInRedis(lockKey);
-//            }
-            if (acquired && lock.isHeldByCurrentThread()) { // Ensure it's acquired AND held by current thread
-                try {
-                    lock.unlock(); // Use standard unlock() method
-                    log.info("Successfully unlocked: {}", lockKey);
-                } catch (IllegalMonitorStateException e) {
-                    // This can happen if the lock expired or was force-unlocked by another process
-                    // before this thread got to unlock it. Log and ignore, as it's already "unlocked" from Redisson's view.
-                    log.warn("Attempted to unlock lock '{}' which was not held by current thread or already expired: {}", lockKey, e.getMessage());
-                }
+            if (acquired) {
+                releaseLock(lock);
             }
         }
     }
@@ -91,21 +81,20 @@ public class DistributedLockAspect {
         }
     }
 
-//    private void releaseLockInRedis(String lockKey) {
-//        RLock lock = redissonClient.getLock(lockKey);
-//        if (lock.isLocked() && lock.isHeldByCurrentThread()) {
-//            try {
-//                lock.unlock();
-//                log.info("Released lock: {}", lockKey);
-//            } catch (IllegalMonitorStateException e) {
-//                log.info("Lock expired/ not held by thread: {}", lockKey);
-//            } catch (Exception e) {
-//                log.error("Error releasing lock '{}': {}", lockKey, e.getMessage());
-//            }
-//        } else {
-//            log.warn("Not locked/held by thread: {}", lockKey);
-//        }
-//    }
+    private void releaseLock(RLock lock) {
+        if (lock.isLocked() && lock.isHeldByCurrentThread()) {
+            try {
+                lock.unlock();
+                log.info("Released lock: {}", lock.getName());
+            } catch (IllegalMonitorStateException e) {
+                log.info("Lock expired/ not held by thread: {}", lock.getName());
+            } catch (Exception e) {
+                log.error("Error releasing lock '{}': {}", lock.getName(), e.getMessage());
+            }
+        } else {
+            log.warn("Not locked/held by thread: {}", lock.getName());
+        }
+    }
 
     private Object handleLockAcquisitionFailure(ProceedingJoinPoint joinPoint,
                                                 DistributedLock lockAnnotation) throws Throwable {
