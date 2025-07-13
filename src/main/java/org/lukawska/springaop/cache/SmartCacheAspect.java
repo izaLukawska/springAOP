@@ -99,6 +99,35 @@ public class SmartCacheAspect {
     }
 
     /**
+     * Handles the eviction of cache entries based on the provided {@link InvalidateCache} annotation settings.
+     * This method identifies the cache names, key patterns, and dependent caches to invalidate
+     * and dispatches them for invalidation either synchronously or asynchronously based on the configuration.
+     * Logs details about the invalidation actions and skips the process when no relevant eviction patterns are found.
+     *
+     * @param invalidateCache The {@link InvalidateCache} annotation containing details such as cache names,
+     *                        key patterns to invalidate, dependent caches, and whether the eviction should run
+     *                        asynchronously.
+     */
+    @After("@annotation(invalidateCache)")
+    public void evictCache(InvalidateCache invalidateCache) {
+        Set<String> patternsToEvict = new java.util.HashSet<>();
+        boolean isAsync = invalidateCache.async();
+
+        handleCacheNameInvalidation(invalidateCache, patternsToEvict);
+        handleKeyPatternInvalidation(invalidateCache, patternsToEvict);
+        handleDependentCacheInvalidation(invalidateCache, isAsync);
+
+        if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
+            log.info("Skipping eviction due to no cache name or pattern found.");
+            return;
+        }
+
+        if (!patternsToEvict.isEmpty()) {
+            dispatchPatternInvalidation(patternsToEvict, isAsync);
+        }
+    }
+
+    /**
      * Attempts to retrieve a value from the local WeakReference cache.
      *
      * @param cacheKey             The key for the cache entry.
@@ -212,35 +241,6 @@ public class SmartCacheAspect {
         weakRefLocalCache.put(key, new WeakReference<>(value));
         log.info("Cached result in local WeakReference cache for key: {}'", key);
         putCounter.increment();
-    }
-
-    /**
-     * Handles the eviction of cache entries based on the provided {@link InvalidateCache} annotation settings.
-     * This method identifies the cache names, key patterns, and dependent caches to invalidate
-     * and dispatches them for invalidation either synchronously or asynchronously based on the configuration.
-     * Logs details about the invalidation actions and skips the process when no relevant eviction patterns are found.
-     *
-     * @param invalidateCache The {@link InvalidateCache} annotation containing details such as cache names,
-     *                        key patterns to invalidate, dependent caches, and whether the eviction should run
-     *                        asynchronously.
-     */
-    @After("@annotation(invalidateCache)")
-    public void evictCache(InvalidateCache invalidateCache) {
-        Set<String> patternsToEvict = new java.util.HashSet<>();
-        boolean isAsync = invalidateCache.async();
-
-        handleCacheNameInvalidation(invalidateCache, patternsToEvict);
-        handleKeyPatternInvalidation(invalidateCache, patternsToEvict);
-        handleDependentCacheInvalidation(invalidateCache, isAsync);
-
-        if (patternsToEvict.isEmpty() && invalidateCache.dependsOn().length == 0) {
-            log.info("Skipping eviction due to no cache name or pattern found.");
-            return;
-        }
-
-        if (!patternsToEvict.isEmpty()) {
-            dispatchPatternInvalidation(patternsToEvict, isAsync);
-        }
     }
 
     /**

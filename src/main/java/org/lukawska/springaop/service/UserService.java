@@ -18,7 +18,7 @@ public class UserService {
 
     private final UserRepository repository;
 
-    @SmartCache(cacheName = "users", key = "#id", ttlSeconds = 5, useWeakReference = true)
+    @SmartCache(cacheName = "users", key = "#id", ttlSeconds = 5)
     public UserResponse getUserById(Long id) {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
