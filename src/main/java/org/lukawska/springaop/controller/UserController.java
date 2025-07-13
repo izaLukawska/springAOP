@@ -5,11 +5,12 @@ import lombok.RequiredArgsConstructor;
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.dto.UserResponse;
 import org.lukawska.springaop.service.UserService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/users")
+@RequestMapping("/api/users")
 public class UserController {
 
     private final UserService userService;
@@ -20,8 +21,8 @@ public class UserController {
     }
 
     @PostMapping
-    public UserResponse createUser(@RequestBody @Valid UserRequest userRequest) {
-        return userService.createUser(userRequest);
+    public ResponseEntity<UserResponse> createUser(@RequestBody @Valid UserRequest userRequest) {
+        return ResponseEntity.status(201).body(userService.createUser(userRequest));
     }
 
     @DeleteMapping("/{id}")
