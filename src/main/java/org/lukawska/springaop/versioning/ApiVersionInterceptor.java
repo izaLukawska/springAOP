@@ -21,6 +21,8 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
 
     private final ApiVersionExtractor apiVersionExtractor;
 
+    private final ApiVersionMetricsService apiVersionMetricsService;
+
     @Override
     public boolean preHandle(@NonNull HttpServletRequest request,
                              @NonNull HttpServletResponse response,
@@ -58,6 +60,9 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
         request.setAttribute("startTime", System.currentTimeMillis());
         request.setAttribute("api.version.used", finalVersionToUse);
 
+        apiVersionMetricsService.incrementApiVersionUsage(finalVersionToUse);
+        log.debug("API version usage increment for version: {}", finalVersionToUse);
+
         response.setHeader("X-API-Version", finalVersionToUse);
         log.debug("Setting X-API-Version header {}", finalVersionToUse);
 
@@ -92,7 +97,8 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
         }
 
         if (apiVersionAnnotation.versions().length == 0) {
-            log.error("No supported versions defined for: {}.{}", controllerName, methodName);
+            log.error("No supported versions defined for: {}.{}",
+                controllerName, methodName);
 
             response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
                 "API versioning misconfiguration.");
@@ -100,8 +106,10 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
         }
 
         if (apiVersionAnnotation.requiresVersion()) {
-            log.warn("API version required but not provided for {}.{}.", controllerName, methodName);
-            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "API version is required.");
+            log.warn("API version required but not provided for {}.{}.",
+                controllerName, methodName);
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST,
+                "API version is required.");
             return null;
         }
 
@@ -125,7 +133,8 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
         if (!supportedVersions.contains(finalVersionToUse)) {
             log.warn("Unsupported API version '{}' for {}.{}. Supported: {}",
                 finalVersionToUse, controllerName, methodName, supportedVersions);
-            response.sendError(HttpServletResponse.SC_NOT_FOUND,
+            apiVersionMetricsService.incrementInvalidVersionUsage(finalVersionToUse);
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST,
                 "API version not supported: " + finalVersionToUse);
             return false;
         }
@@ -144,6 +153,7 @@ public class ApiVersionInterceptor implements HandlerInterceptor {
             && requestedVersion.equals(apiVersionAnnotation.deprecated())) {
 
             response.addHeader("Warning", "299 - This API version is deprecated (future remove)");
+            apiVersionMetricsService.incrementDeprecatedVersionUsage(requestedVersion);
             log.warn("Accessed deprecated API version '{}' for {}.{}",
                 requestedVersion, controllerName, methodName);
         }
