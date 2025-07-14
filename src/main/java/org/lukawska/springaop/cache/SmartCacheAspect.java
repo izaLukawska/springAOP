@@ -1,7 +1,5 @@
 package org.lukawska.springaop.cache;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -63,36 +61,29 @@ public class SmartCacheAspect {
         String cacheKey = generateSmartCacheKey(pjp, smartCache.key(), cacheName);
         String methodName = pjp.getSignature().toShortString();
 
-        Counter localCacheHitCounter = cacheMetricsService.getCacheCounter("hits", cacheName,
-            "local", "Number of cache hits in local cache");
-        Counter redisCacheHitCounter = cacheMetricsService.getCacheCounter("hits", cacheName,
-            "redis", "Number of cache hits in Redis cache");
-        Counter cacheMissCounter = cacheMetricsService.getCacheCounter("misses", cacheName,
-            null, "Number of cache misses");
-        Counter redisCachePutCounter = cacheMetricsService.getCacheCounter("puts", cacheName,
-            "redis", "Number of items put into Redis cache");
-        Counter localCachePutCounter = cacheMetricsService.getCacheCounter("puts", cacheName,
-            "local", "Number of items put into local cache");
-        Timer methodExecutionTimer = cacheMetricsService.getMethodTimer(cacheName, methodName,
-            "Duration of the method execution when cache is missed");
-
-        Object cachedValue = tryGetFromLocalCache(cacheKey, smartCache, localCacheHitCounter);
+        Object cachedValue = tryGetFromLocalCache(cacheKey, smartCache);
         if (cachedValue != null) {
             return cachedValue;
         }
 
-        cachedValue = tryGetFromRedis(cacheKey, smartCache, redisCacheHitCounter, localCachePutCounter);
+        cachedValue = tryGetFromRedis(cacheKey, smartCache);
         if (cachedValue != null) {
+
             return cachedValue;
         }
 
         log.info("Cache MISS for key: {} ", cacheKey);
-        cacheMissCounter.increment();
+        cacheMetricsService.incrementCacheCounter("misses", cacheName,
+            null, "Number of cache misses"); //
 
-        Object result = executeOriginalMethod(pjp, methodExecutionTimer);
+        long startTime = System.nanoTime();
+        Object result = pjp.proceed();
+        long durationNanos = System.nanoTime() - startTime;
+        cacheMetricsService.recordMethodDuration(cacheName, methodName,
+            "Duration of the method execution when cache is missed", durationNanos);
 
         if (result != null) {
-            storeResultInCaches(cacheKey, result, smartCache, redisCachePutCounter, localCachePutCounter);
+            storeResultInCaches(cacheKey, result, smartCache);
         }
 
         return result;
@@ -130,40 +121,40 @@ public class SmartCacheAspect {
     /**
      * Attempts to retrieve a value from the local WeakReference cache.
      *
-     * @param cacheKey             The key for the cache entry.
-     * @param smartCache           The @SmartCache annotation, to check if a local cache is enabled.
-     * @param localCacheHitCounter The counter for the local cache hits.
+     * @param cacheKey   The key for the cache entry.
+     * @param smartCache The @SmartCache annotation, to check if a local cache is enabled.
      * @return The cached object if found, otherwise null.
      */
-    private Object tryGetFromLocalCache(String cacheKey, SmartCache smartCache, Counter localCacheHitCounter) {
+    private Object tryGetFromLocalCache(String cacheKey, SmartCache smartCache) {
         if (smartCache.useWeakReference()) {
             Object cachedValue = getFromWeakRefLocalCache(cacheKey);
             if (cachedValue != null) {
                 log.info("Cache HIT (local - WeakReference) for key: {}'", cacheKey);
-                localCacheHitCounter.increment();
+                cacheMetricsService.incrementCacheCounter("hits", smartCache.cacheName(),
+                    "local", "Number of cache hits in local cache");
                 return cachedValue;
             }
         }
+
         return null;
     }
+
 
     /**
      * Attempts to retrieve a value from Redis cache. If found, potentially stores it in a local cache.
      *
-     * @param cacheKey             The key for the cache entry.
-     * @param smartCache           The @SmartCache annotation, to check if a local cache is enabled.
-     * @param redisCacheHitCounter The counter for Redis cache hits.
-     * @param localCachePutCounter The counter for local cache puts (if data from Redis is put into the local cache).
+     * @param cacheKey   The key for the cache entry.
+     * @param smartCache The @SmartCache annotation, to check if a local cache is enabled.
      * @return The cached object if found, otherwise null.
      */
-    private Object tryGetFromRedis(String cacheKey, SmartCache smartCache,
-                                   Counter redisCacheHitCounter, Counter localCachePutCounter) {
+    private Object tryGetFromRedis(String cacheKey, SmartCache smartCache) {
         Object cachedValue = redisTemplate.opsForValue().get(cacheKey);
         if (cachedValue != null) {
             log.info("Cache HIT (Redis) for key: {}", cacheKey);
-            redisCacheHitCounter.increment();
+            cacheMetricsService.incrementCacheCounter("hits", smartCache.cacheName(),
+                "redis", "Number of cache hits in Redis cache");
             if (smartCache.useWeakReference()) {
-                putInWeakRefLocalCache(cacheKey, cachedValue, localCachePutCounter);
+                putInWeakRefLocalCache(cacheKey, cachedValue, smartCache.cacheName());
             }
             return cachedValue;
         }
@@ -171,43 +162,20 @@ public class SmartCacheAspect {
     }
 
     /**
-     * Executes the original method and measures its execution time.
-     *
-     * @param pjp                  The ProceedingJoinPoint to proceed with the method execution.
-     * @param methodExecutionTimer The timer for method execution duration.
-     * @return The result of the original method.
-     * @throws Throwable if the original method throws an exception.
-     */
-    private Object executeOriginalMethod(ProceedingJoinPoint pjp, Timer methodExecutionTimer) throws Throwable {
-        return methodExecutionTimer.recordCallable(() -> {
-            try {
-                return pjp.proceed();
-            } catch (Throwable t) {
-                if (t instanceof Exception) {
-                    throw (Exception) t;
-                }
-                throw new RuntimeException("Original method execution failed with an unexpected Throwable", t);
-            }
-        });
-    }
-
-    /**
      * Stores the result in Redis cache and potentially in local cache.
      *
-     * @param cacheKey             The key for the cache entry.
-     * @param result               The result to cache.
-     * @param smartCache           The @SmartCache annotation, for TTL and local cache settings.
-     * @param redisCachePutCounter The counter for Redis cache puts.
-     * @param localCachePutCounter The counter for the local cache puts.
+     * @param cacheKey   The key for the cache entry.
+     * @param result     The result to cache.
+     * @param smartCache The @SmartCache annotation, for TTL and local cache settings.
      */
-    private void storeResultInCaches(String cacheKey, Object result, SmartCache smartCache,
-                                     Counter redisCachePutCounter, Counter localCachePutCounter) {
+    private void storeResultInCaches(String cacheKey, Object result, SmartCache smartCache) {
         redisTemplate.opsForValue().set(cacheKey, result, smartCache.ttlSeconds(), TimeUnit.SECONDS);
         log.info("Cached result in Redis for key: {}', with TTL: {} s", cacheKey, smartCache.ttlSeconds());
-        redisCachePutCounter.increment();
+        cacheMetricsService.incrementCacheCounter("puts", smartCache.cacheName(),
+            "redis", "Number of items put into Redis cache");
 
         if (smartCache.useWeakReference()) {
-            putInWeakRefLocalCache(cacheKey, result, localCachePutCounter);
+            putInWeakRefLocalCache(cacheKey, result, smartCache.cacheName());
         }
     }
 
@@ -235,12 +203,13 @@ public class SmartCacheAspect {
      *
      * @param key        The cache key.
      * @param value      The value to cache.
-     * @param putCounter The Micrometer counter for local cache puts.
+     * @param cacheName  The name of the cache for metrics tagging.
      */
-    private void putInWeakRefLocalCache(String key, Object value, Counter putCounter) {
+    private void putInWeakRefLocalCache(String key, Object value, String cacheName) {
         weakRefLocalCache.put(key, new WeakReference<>(value));
         log.info("Cached result in local WeakReference cache for key: {}'", key);
-        putCounter.increment();
+        cacheMetricsService.incrementCacheCounter("puts", cacheName,
+            "local", "Number of items put into local cache");
     }
 
     /**
@@ -254,9 +223,8 @@ public class SmartCacheAspect {
     private void handleCacheNameInvalidation(InvalidateCache invalidateCache, Set<String> patternsToEvict) {
         if (invalidateCache.cacheNames().length > 0) {
             String cacheNamesStr = String.join(",", invalidateCache.cacheNames());
-            cacheMetricsService.getEvictionByNameCounter(cacheNamesStr,
-                    "Number of cache evictions triggered by specific cache names.")
-                .increment();
+            cacheMetricsService.incrementEvictionByNameCounter(cacheNamesStr,
+                "Number of cache evictions triggered by specific cache names.");
             Arrays.stream(invalidateCache.cacheNames())
                 .forEach(cacheName -> {
                     patternsToEvict.add(cacheName + ":*");
@@ -280,9 +248,8 @@ public class SmartCacheAspect {
     private void handleKeyPatternInvalidation(InvalidateCache invalidateCache, Set<String> patternsToEvict) {
         if (!invalidateCache.keyPattern().isEmpty()) {
             String cacheTag = inferCacheNameFromPattern(invalidateCache.keyPattern());
-            cacheMetricsService.getEvictionByPatternCounter(cacheTag,
-                    "Number of cache evictions triggered by key patterns.")
-                .increment();
+            cacheMetricsService.incrementEvictionByPatternCounter(cacheTag,
+                "Number of cache evictions triggered by key patterns.");
             patternsToEvict.add(invalidateCache.keyPattern());
 
             String pattern = invalidateCache.keyPattern();
@@ -311,9 +278,8 @@ public class SmartCacheAspect {
     private void handleDependentCacheInvalidation(InvalidateCache invalidateCache, boolean isAsync) {
         if (invalidateCache.dependsOn().length > 0) {
             Arrays.stream(invalidateCache.dependsOn()).forEach(dependentCacheName -> {
-                cacheMetricsService.getEvictionByDependencyCounter(dependentCacheName,
-                        "Number of cache eviction triggered by dependencies.")
-                    .increment();
+                cacheMetricsService.incrementEvictionByDependencyCounter(dependentCacheName,
+                    "Number of cache eviction triggered by dependencies.");
                 weakRefLocalCache.keySet().removeIf(key -> key.startsWith(dependentCacheName + ":"));
                 log.info("Local WeakReference cache keys dependent on '{}' invalidated.", dependentCacheName);
             });
