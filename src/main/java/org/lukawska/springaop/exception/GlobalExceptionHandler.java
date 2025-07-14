@@ -1,7 +1,6 @@
 package org.lukawska.springaop.exception;
 
 import org.lukawska.springaop.validation.BusinessValidationException;
-import org.lukawska.springaop.validation.ErrorResponse;
 import org.lukawska.springaop.validation.ValidationError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,9 +13,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -53,27 +52,12 @@ public class GlobalExceptionHandler {
      * @return A response with a "Bad Request" status and details about the validation errors.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValidationExceptions(MethodArgumentNotValidException ex,
+    public ResponseEntity<Object> handleValidationExceptions(MethodArgumentNotValidException ex,
                                                                     WebRequest request) {
-
         log.warn("MethodArgumentNotValidException caught: {}", ex.getMessage());
+        Map<String, Object> body = mapToErrorResponse(HttpStatus.BAD_REQUEST,ex,request);
 
-        List<ValidationError> validationErrors = ex.getBindingResult().getAllErrors().stream()
-            .filter(error -> error instanceof FieldError)
-            .map(error -> (FieldError) error)
-            .map(fieldError ->
-                new ValidationError(fieldError.getField(), fieldError.getDefaultMessage()))
-            .collect(Collectors.toList());
-
-        ErrorResponse errorResponse = ErrorResponse.builder()
-            .timestamp(LocalDateTime.now())
-            .status(HttpStatus.BAD_REQUEST.value())
-            .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
-            .message("Validation failed for input data.")
-            .path(request.getDescription(false).replace("uri=", ""))
-            .validationErrors(validationErrors).build();
-
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
     }
 
     /**
@@ -86,15 +70,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Object> handleBusinessValidationException(BusinessValidationException ex,
                                                                     WebRequest request) {
         log.warn("BusinessValidationException caught: {}", ex.getMessage());
-
-        Map<String, Object> body = Map.of(
-            "timestamp", LocalDateTime.now(),
-            "status", HttpStatus.BAD_REQUEST.value(),
-            "error", HttpStatus.BAD_REQUEST.getReasonPhrase(),
-            "message", ex.getMessage(),
-            "validationErrors", ex.getErrors(),
-            "path", request.getDescription(false).replace("uri=", "")
-        );
+        Map<String, Object> body = mapToErrorResponse(HttpStatus.BAD_REQUEST, ex, request);
 
         return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
     }
@@ -108,15 +84,33 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleAllExceptions(Exception ex, WebRequest request) {
         log.error("Unknown error: {}", ex.getMessage(), ex);
-
-        Map<String, Object> body = Map.of(
-            "timestamp", LocalDateTime.now(),
-            "status", HttpStatus.INTERNAL_SERVER_ERROR.value(),
-            "error", HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(),
-            "message", "Internal server error.",
-            "path", request.getDescription(false).replace("uri=", "")
-        );
+        Map<String, Object> body = mapToErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, ex, request);
 
         return new ResponseEntity<>(body, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    private Map<String, Object> mapToErrorResponse(HttpStatus status,
+                                                   Exception exception,
+                                                   WebRequest request){
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("status", status.value());
+        body.put("error", status.getReasonPhrase());
+        body.put("message", exception.getMessage());
+        body.put("path", request.getDescription(false).replace("uri=", ""));
+
+        if (exception instanceof BusinessValidationException ex) {
+            body.put("validationErrors", ex.getErrors());
+        } else if(exception instanceof MethodArgumentNotValidException ex){
+            List<ValidationError> validationErrors = ex.getBindingResult().getAllErrors().stream()
+                .filter(error -> error instanceof FieldError)
+                .map(error -> (FieldError) error)
+                .map(fieldError
+                    -> new ValidationError(fieldError.getField(), fieldError.getDefaultMessage()))
+                .toList();
+            body.put("validationErrors",  validationErrors);
+
+        }
+
+        return body;
     }
 }
