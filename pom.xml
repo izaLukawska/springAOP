@@ -29,8 +29,8 @@
     <properties>
         <java.version>21</java.version>
         <spring-boot.version>3.5.3</spring-boot.version>
-        <lombok.version>1.18.38</lombok.version>
         <micrometer.version>1.15.0</micrometer.version>
+        <lombok.version>1.18.38</lombok.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <spring.boot.maven.plugin.version>${spring-boot.version}</spring.boot.maven.plugin.version>
     </properties>
@@ -52,14 +52,15 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
+            <artifactId>spring-boot-starter-validation</artifactId>
             <version>${spring-boot.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
             <version>${spring-boot.version}</version>
         </dependency>
+
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
@@ -85,7 +86,6 @@
             <version>${spring-boot.version}</version>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
 
     <build>
