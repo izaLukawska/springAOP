@@ -104,7 +104,6 @@ public class CacheInvalidator {
                 Long deletedCount = redisTemplate.delete(keysToEvict);
                 log.info("[SYNC] Deleted {} keys from Redis for pattern: {}", deletedCount, pattern);
 
-                // --- Usuwanie z lokalnego cache'a WeakReference ---
                 keysToEvict.forEach(localCache::remove);
                 log.info("[SYNC] Deleted {} keys from local WeakReference cache for pattern: {}",
                     keysToEvict.size(),

@@ -18,10 +18,10 @@ public class ApiVersionMetricsService {
     }
 
     public void incrementDeprecatedVersionUsage(String version) {
-        meterRegistry.counter("api_deprecated_version_usage_total", "version", version).increment();
+        meterRegistry.counter("deprecated_version_usage_total", "version", version).increment();
     }
 
     public void incrementInvalidVersionUsage(String invalidVersion) {
-        meterRegistry.counter("api_invalid_version_usage_total", "invalid_version", invalidVersion).increment();
+        meterRegistry.counter("invalid_version_usage_total", "version", invalidVersion).increment();
     }
 }

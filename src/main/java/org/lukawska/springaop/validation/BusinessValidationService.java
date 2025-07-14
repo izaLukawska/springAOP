@@ -1,7 +1,8 @@
 package org.lukawska.springaop.validation;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.lukawska.springaop.validation.exception.BusinessValidationException;
+import org.lukawska.springaop.validation.exception.ValidationError;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -9,9 +10,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class BusinessValidationService {
-
-    private static final Logger log = LoggerFactory.getLogger(BusinessValidationService.class);
 
     private final Map<Class<?>, Map<String, BusinessValidator<?>>> validatorsMap;
 

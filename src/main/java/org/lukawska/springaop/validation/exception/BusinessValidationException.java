@@ -1,4 +1,4 @@
-package org.lukawska.springaop.validation;
+package org.lukawska.springaop.validation.exception;
 
 import lombok.Getter;
 

@@ -1,7 +1,7 @@
 package org.lukawska.springaop.exception;
 
-import org.lukawska.springaop.validation.BusinessValidationException;
-import org.lukawska.springaop.validation.ValidationError;
+import org.lukawska.springaop.validation.exception.BusinessValidationException;
+import org.lukawska.springaop.validation.exception.ValidationError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;

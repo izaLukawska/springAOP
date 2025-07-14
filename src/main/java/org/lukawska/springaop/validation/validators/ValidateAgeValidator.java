@@ -2,7 +2,7 @@ package org.lukawska.springaop.validation.validators;
 
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.validation.BusinessValidator;
-import org.lukawska.springaop.validation.ValidationError;
+import org.lukawska.springaop.validation.exception.ValidationError;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

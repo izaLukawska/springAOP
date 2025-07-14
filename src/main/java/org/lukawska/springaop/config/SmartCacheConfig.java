@@ -14,9 +14,8 @@ import java.util.concurrent.Executor;
 public class SmartCacheConfig {
 
     /**
-     * Definiuje ConcurrentHashMap jako Spring Bean.
-     * To sprawia, że Spring może automatycznie wstrzykiwać (autowire)
-     * tę mapę do innych komponentów (np. SmartCachingAspect, AsyncCacheInvalidator).
+     * Defines ConcurrentHashMap as Bean.
+     * This way it can be autowired in other components (e.g. SmartCacheAspect).
      */
     @Bean
     public ConcurrentHashMap<String, WeakReference<Object>> localCache() {
@@ -24,10 +23,10 @@ public class SmartCacheConfig {
     }
 
     /**
-     * Konfiguruje niestandardową pulę wątków dla metod asynchronicznych.
-     * Metody z adnotacją @Async mogą używać tej puli, odwołując się do niej po nazwie (np. @Async
-     * ("asyncInvalidatorExecutor")).
-     * To pozwala na lepszą kontrolę nad liczbą wątków i zasobami.
+     * Configures a custom thread pool for asynchronous methods.
+     * Methods annotated with @Async can use this pool
+     * by referring to it by name (e.g @Async("asyncInvalidatorExecutor")).
+     * This allows for better control over the number of threads and resources.
      */
     @Bean(name = "asyncInvalidatorExecutor")
     public Executor asyncExecutor() {

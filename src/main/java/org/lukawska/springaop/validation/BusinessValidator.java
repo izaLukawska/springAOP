@@ -1,5 +1,7 @@
 package org.lukawska.springaop.validation;
 
+import org.lukawska.springaop.validation.exception.ValidationError;
+
 import java.util.List;
 
 public interface BusinessValidator<T> {

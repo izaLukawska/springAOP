@@ -11,7 +11,6 @@ import java.util.regex.Pattern;
 @Slf4j
 public class ApiVersionExtractor {
 
-
     private static final Pattern ACCEPT_VERSION_PATTERN = Pattern.compile("application/vnd\\.myapi\\.(v\\d+)\\+json");
 
     private static final Pattern URL_VERSION_PATTERN = Pattern.compile("/v(\\d+)/");
