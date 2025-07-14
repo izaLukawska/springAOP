@@ -1,13 +1,14 @@
 package org.lukawska.springaop.service;
 
 import lombok.RequiredArgsConstructor;
+import org.lukawska.springaop.cache.InvalidateCache;
+import org.lukawska.springaop.cache.SmartCache;
 import org.lukawska.springaop.dto.UserRequest;
 import org.lukawska.springaop.dto.UserResponse;
 import org.lukawska.springaop.entity.User;
 import org.lukawska.springaop.exception.UserAlreadyExistsException;
 import org.lukawska.springaop.exception.UserNotFoundException;
 import org.lukawska.springaop.repository.UserRepository;
-import org.lukawska.springaop.validation.BusinessValidation;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -17,24 +18,12 @@ public class UserService {
 
     private final UserRepository repository;
 
-    /**
-     * Method used to retrieve User from the repository.
-     * @param id The id of the user we want to retrieve.
-     * @return User mapped to UserResponse (DTO)
-     * @throws UserNotFoundException when no such user exists.
-     */
+    @SmartCache(cacheName = "users", key = "#id", ttlSeconds = 5)
     public UserResponse getUserById(Long id) {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
-    /**
-     * Method to create a new user.
-     * The method also applies BusinessValidation validation via the annotation @BusinessValidation.
-     * @param request Take the request to map it to UserResponse.
-     * @return Created User or UserAlreadyExistsException.
-     * @throws UserAlreadyExistsException If a user with the same unique details (like username or email) already exists.
-     */
-    @BusinessValidation(rules = {"validateUsername", "validateEmail", "validateAge"}, failFast = false)
+    @InvalidateCache(cacheNames = {"users"})
     public UserResponse createUser(UserRequest request) {
         try {
             return mapToResponse(repository.save(mapToUser(request)));
@@ -43,11 +32,7 @@ public class UserService {
         }
     }
 
-    /**
-     * Method to delete user.
-     * Throws UserNotFoundException if no such user exists.
-     * @param id The id of the user we want to delete.
-     */
+    @InvalidateCache(cacheNames = {"users"})
     public void deleteUserById(Long id) {
         if (!repository.existsById(id)) {
             throw new UserNotFoundException(id);
