@@ -14,6 +14,7 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 @Aspect
@@ -37,7 +38,12 @@ public class DistributedLockAspect {
                 acquired = lock.tryLock(lockAnnotation.waitTimeSeconds(),
                     lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
             } else {
-                acquired = lock.tryLock(0, lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
+                long leaseTime = lockAnnotation.leaseTimeSeconds();
+                if (leaseTime == -1) {
+                    acquired = lock.tryLock(0, TimeUnit.SECONDS);
+                } else {
+                    acquired = lock.tryLock(0, leaseTime, TimeUnit.SECONDS);
+                }
             }
 
             if (acquired) {
@@ -45,9 +51,13 @@ public class DistributedLockAspect {
                     lockKey, joinPoint.getSignature().toShortString());
                 return joinPoint.proceed();
             } else {
-                log.info("Lock '{}' NOT acquired, handling failure for method: {}",
-                    lockKey, joinPoint.getSignature().toShortString());
-                return handleLockAcquisitionFailure(joinPoint, lockAnnotation);
+                if (lockAnnotation.strategy() == LockStrategy.SKIP_EXECUTION) {
+                    log.info("Locked skipped (strategy = SKIP_EXECUTION)");
+                    return joinPoint.proceed();
+                } else {
+                    log.info("Strategy is FAIL_FAST or WAIT_AND_RETRY failed. Handling failure.");
+                    return handleLockAcquisitionFailure(joinPoint, lockAnnotation);
+                }
             }
         } finally {
             if (acquired) {
@@ -163,7 +173,7 @@ public class DistributedLockAspect {
             generatedKey = lockName.isEmpty() ? dynamicKeyPart : lockName + ":" + dynamicKeyPart;
         }
 
-        if (generatedKey.isEmpty()) {
+        if (Objects.requireNonNull(generatedKey).isEmpty()) {
             String methodName = joinPoint.getSignature().toShortString();
             log.error("Empty lock key for method: {}", methodName);
             throw new IllegalArgumentException("Lock key cannot be empty for method: "

@@ -8,6 +8,7 @@ import org.lukawska.springaop.entity.User;
 import org.lukawska.springaop.exception.UserAlreadyExistsException;
 import org.lukawska.springaop.exception.UserNotFoundException;
 import org.lukawska.springaop.locking.DistributedLock;
+import org.lukawska.springaop.locking.LockStrategy;
 import org.lukawska.springaop.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -26,8 +27,9 @@ public class UserService {
     @DistributedLock(
         lockName = "user_lookup",
         key = "#request.username",
-        waitTimeSeconds = 0,
+        waitTimeSeconds = 3,
         leaseTimeSeconds = 10,
+        strategy = LockStrategy.WAIT_AND_RETRY,
         fallbackMethod = "createUserFallback"
     )
     public UserResponse createUser(UserRequest request) {
