@@ -6,6 +6,8 @@ import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.TimeUnit;
+
 @Service
 @RequiredArgsConstructor
 public class CacheMetricsService {
@@ -13,7 +15,7 @@ public class CacheMetricsService {
     private final MeterRegistry meterRegistry;
 
     /**
-     * Retrieves or creates a Counter for cache operations.
+     * Increments a counter for cache operations (e.g., hits, misses, puts) by 1.
      * Metric Name: cache.<nameSuffix>_total
      * Tags: cache=<cacheName>, type=<type> (optional)
      *
@@ -21,82 +23,82 @@ public class CacheMetricsService {
      * @param cacheName   The name of the cache (used as a "cache" tag).
      * @param type        The type of cache (used as a "type" tag, e.g., "local", "redis"). Can be null or empty.
      * @param description A description for the metric.
-     * @return An instance of Counter.
      */
-    public Counter getCacheCounter(String nameSuffix, String cacheName, String type, String description) {
-        Counter.Builder builder = Counter.builder("cache." + nameSuffix)
+    public void incrementCacheCounter(String nameSuffix, String cacheName, String type, String description) {
+        Counter.Builder builder = Counter.builder("cache." + nameSuffix + "_total")
             .tag("cache", cacheName)
             .description(description);
 
         if (type != null && !type.isEmpty()) {
             builder.tag("type", type);
         }
-        return builder.register(meterRegistry);
+        builder.register(meterRegistry).increment(); // Direct increment by 1
     }
 
     /**
-     * Retrieves or creates a Timer for measuring method execution duration.
-     * Metric Name: cache.method.duration_seconds
+     * Records the duration of a method execution related to cache.
+     * Metric Name: cache.method.duration
      * Tags: cache=<cacheName>, method=<methodName>
      *
      * @param cacheName   The name of the cache associated with the method (used as "cache" tag).
      * @param methodName  The name of the method being timed (used as "method" tag).
      * @param description A description for the metric.
-     * @return An instance of Timer.
+     * @param durationNanos Duration in nanoseconds.
      */
-    public Timer getMethodTimer(String cacheName, String methodName, String description) {
-        return Timer.builder("cache.method.duration")
+    public void recordMethodDuration(String cacheName, String methodName, String description, long durationNanos) {
+        Timer.builder("cache.method.duration")
             .tag("cache", cacheName)
             .tag("method", methodName)
             .description(description)
-            .register(meterRegistry);
+            .register(meterRegistry)
+            .record(durationNanos, TimeUnit.NANOSECONDS); // Direct time recording
     }
 
     /**
-     * Retrieves or creates a Counter for cache evictions by specific cache names.
+     * Increments a counter for cache evictions by specific cache names.
      * Metric Name: cache.evictions.by.name_total
      * Tags: cache=<cacheName>
      *
-     * @param cacheName   The name of the cache being evicted.
+     * @param cacheName   The name of the cache from which elements are being evicted.
      * @param description A description for the metric.
-     * @return An instance of Counter.
      */
-    public Counter getEvictionByNameCounter(String cacheName, String description) {
-        return Counter.builder("cache.evictions.by.name")
+    public void incrementEvictionByNameCounter(String cacheName, String description) {
+        Counter.builder("cache.evictions.by.name_total")
             .tag("cache", cacheName)
             .description(description)
-            .register(meterRegistry);
+            .register(meterRegistry)
+            .increment(); // Direct increment by 1
     }
 
     /**
-     * Retrieves or creates a Counter for cache evictions by key patterns.
+     * Increments a counter for cache evictions by key patterns.
      * Metric Name: cache.evictions.by.pattern_total
      * Tags: cache=<cacheName> (if a single cache name can be inferred, or "multiple" for broad patterns)
      *
      * @param cacheName   A representative cache name for the pattern (or "all" if the pattern is too broad).
      * @param description A description for the metric.
-     * @return An instance of Counter.
      */
-    public Counter getEvictionByPatternCounter(String cacheName, String description) {
-        return Counter.builder("cache.evictions.by.pattern")
+    public void incrementEvictionByPatternCounter(String cacheName, String description) {
+        Counter.builder("cache.evictions.by.pattern_total")
             .tag("cache", cacheName)
             .description(description)
-            .register(meterRegistry);
+            .register(meterRegistry)
+            .increment(); // Direct increment by 1
     }
 
     /**
-     * Retrieves or creates a Counter for cache evictions triggered by dependencies.
+     * Increments a counter for cache evictions triggered by dependencies.
      * Metric Name: cache.evictions.by.dependency_total
      * Tags: dependsOn=<dependentCacheName>
      *
      * @param dependentCacheName The name of the cache that triggered the invalidation.
      * @param description        A description for the metric.
-     * @return An instance of Counter.
      */
-    public Counter getEvictionByDependencyCounter(String dependentCacheName, String description) {
-        return Counter.builder("cache.evictions.by.dependency")
+    public void incrementEvictionByDependencyCounter(String dependentCacheName, String description) {
+        Counter.builder("cache.evictions.by.dependency_total")
             .tag("dependsOn", dependentCacheName)
             .description(description)
-            .register(meterRegistry);
+            .register(meterRegistry)
+            .increment(); // Direct increment by 1
     }
 }
