@@ -8,7 +8,6 @@ import org.lukawska.springaop.entity.User;
 import org.lukawska.springaop.exception.UserAlreadyExistsException;
 import org.lukawska.springaop.exception.UserNotFoundException;
 import org.lukawska.springaop.locking.DistributedLock;
-import org.lukawska.springaop.locking.LockStrategy;
 import org.lukawska.springaop.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -24,15 +23,22 @@ public class UserService {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
+    public UserResponse createUser(UserRequest request) {
+        try {
+            return mapToResponse(repository.save(mapToUser(request)));
+        } catch (DataIntegrityViolationException e) {
+            throw new UserAlreadyExistsException();
+        }
+    }
+
     @DistributedLock(
         lockName = "user_lookup",
         key = "#request.username",
-        waitTimeSeconds = 3,
+        waitTimeSeconds = 5,
         leaseTimeSeconds = 10,
-        strategy = LockStrategy.WAIT_AND_RETRY,
         fallbackMethod = "createUserFallback"
     )
-    public UserResponse createUser(UserRequest request) {
+    public UserResponse createUserWithLock(UserRequest request) {
         try {
             Thread.sleep(5000);
             return mapToResponse(repository.save(mapToUser(request)));
@@ -44,7 +50,7 @@ public class UserService {
         }
     }
 
-    public UserResponse createUserFallback(UserRequest request) {
+    private UserResponse createUserFallback(UserRequest request) {
         return new UserResponse(99L, "fallback", "test@test.com", 30);
     }
 

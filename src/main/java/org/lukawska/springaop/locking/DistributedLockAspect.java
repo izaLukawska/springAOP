@@ -27,16 +27,21 @@ public class DistributedLockAspect {
 
     private final RedissonClient redissonClient;
 
+    private final DistributedLockMetricsService metricsService;
+
     @Around("@annotation(lockAnnotation)")
     public Object acquireLock(ProceedingJoinPoint joinPoint, DistributedLock lockAnnotation) throws Throwable {
         String lockKey = generateLockKey(lockAnnotation, joinPoint);
         RLock lock = redissonClient.getLock(lockKey);
+        String methodName = joinPoint.getSignature().toShortString();
 
         boolean acquired = false;
+        long startTime = System.nanoTime();
         try {
             if (lockAnnotation.strategy() == LockStrategy.WAIT_AND_RETRY) {
                 acquired = lock.tryLock(lockAnnotation.waitTimeSeconds(),
                     lockAnnotation.leaseTimeSeconds(), TimeUnit.SECONDS);
+                metricsService.recordLockWaitTime(lockKey, methodName, System.nanoTime() - startTime);
             } else {
                 long leaseTime = lockAnnotation.leaseTimeSeconds();
                 if (leaseTime == -1) {
@@ -44,18 +49,22 @@ public class DistributedLockAspect {
                 } else {
                     acquired = lock.tryLock(0, leaseTime, TimeUnit.SECONDS);
                 }
+                metricsService.recordLockWaitTime(lockKey, methodName, System.nanoTime() - startTime);
             }
 
             if (acquired) {
                 log.info("Lock '{}' acquired, proceeding with method: {}",
                     lockKey, joinPoint.getSignature().toShortString());
+                metricsService.incrementLockAcquisitionSuccess(lockKey, methodName);
                 return joinPoint.proceed();
             } else {
                 if (lockAnnotation.strategy() == LockStrategy.SKIP_EXECUTION) {
                     log.info("Locked skipped (strategy = SKIP_EXECUTION)");
+                    metricsService.incrementLockSkipped(lockKey, methodName);
                     return joinPoint.proceed();
                 } else {
                     log.info("Strategy is FAIL_FAST or WAIT_AND_RETRY failed. Handling failure.");
+                    metricsService.incrementLockAcquisitionFailure(lockKey, methodName, "lock_not_acquired");
                     return handleLockAcquisitionFailure(joinPoint, lockAnnotation);
                 }
             }
