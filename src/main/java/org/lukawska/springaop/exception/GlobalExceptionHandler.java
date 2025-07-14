@@ -100,15 +100,17 @@ public class GlobalExceptionHandler {
 
         if (exception instanceof BusinessValidationException ex) {
             body.put("validationErrors", ex.getErrors());
-        } else if(exception instanceof MethodArgumentNotValidException ex){
+            return body;
+        }
+
+        if (exception instanceof MethodArgumentNotValidException ex) {
             List<ValidationError> validationErrors = ex.getBindingResult().getAllErrors().stream()
                 .filter(error -> error instanceof FieldError)
                 .map(error -> (FieldError) error)
-                .map(fieldError
-                    -> new ValidationError(fieldError.getField(), fieldError.getDefaultMessage()))
+                .map(fieldError -> new ValidationError(fieldError.getField(), fieldError.getDefaultMessage()))
                 .toList();
-            body.put("validationErrors",  validationErrors);
-
+            body.put("validationErrors", validationErrors);
+            return body;
         }
 
         return body;
