@@ -15,7 +15,7 @@ public @interface DistributedLock {
 
     long waitTimeSeconds() default 10;
 
-    long leaseTimeSeconds() default 30;
+    long leaseTimeSeconds() default -1;
 
     LockStrategy strategy() default LockStrategy.FAIL_FAST;
 
