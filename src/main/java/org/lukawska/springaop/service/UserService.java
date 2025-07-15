@@ -23,7 +23,7 @@ public class UserService {
         return mapToResponse(repository.findById(id).orElseThrow(() -> new UserNotFoundException(id)));
     }
 
-    @InvalidateCache(cacheNames = {"users"})
+    @InvalidateCache(cacheNames = {"users"}, async = false)
     public UserResponse createUser(UserRequest request) {
         try {
             return mapToResponse(repository.save(mapToUser(request)));

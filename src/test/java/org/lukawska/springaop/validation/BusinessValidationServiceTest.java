@@ -137,8 +137,8 @@ public class BusinessValidationServiceTest {
     void shouldHandleNullTarget() {
         // when && then
         assertDoesNotThrow(() -> validationService.validate(null, true,
-                new String[]{"validateUsername", "validateEmail", "validateAge"},
-                "Validation failed")
+            new String[]{"validateUsername", "validateEmail", "validateAge"},
+            "Validation failed")
         );
 
         verify(usernameValidator, never()).validate(any());

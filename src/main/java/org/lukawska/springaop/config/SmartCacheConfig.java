@@ -5,8 +5,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-import java.lang.ref.WeakReference;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 @Configuration
@@ -14,18 +12,9 @@ import java.util.concurrent.Executor;
 public class SmartCacheConfig {
 
     /**
-     * Defines ConcurrentHashMap as Bean.
-     * This way it can be autowired in other components (e.g. SmartCacheAspect).
-     */
-    @Bean
-    public ConcurrentHashMap<String, WeakReference<Object>> localCache() {
-        return new ConcurrentHashMap<>();
-    }
-
-    /**
      * Configures a custom thread pool for asynchronous methods.
      * Methods annotated with @Async can use this pool
-     * by referring to it by name (e.g @Async("asyncInvalidatorExecutor")).
+     * by referring to it by name (e.g., @Async("asyncInvalidatorExecutor")).
      * This allows for better control over the number of threads and resources.
      */
     @Bean(name = "asyncInvalidatorExecutor")

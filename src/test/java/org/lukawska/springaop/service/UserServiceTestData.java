@@ -9,7 +9,7 @@ import org.lukawska.springaop.entity.User;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 final class UserServiceTestData {
 
-    public static User createUser(){
+    public static User createUser() {
         return User.builder()
             .id(1L)
             .username("test")
@@ -18,11 +18,11 @@ final class UserServiceTestData {
             .build();
     }
 
-    public static UserRequest userRequest(){
+    public static UserRequest userRequest() {
         return new UserRequest("test", "example@example.com", 20);
     }
 
-    public static UserResponse userResponse(){
+    public static UserResponse userResponse() {
         return new UserResponse(1L, "test", "example@example.com", 20);
     }
 }

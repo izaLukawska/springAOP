@@ -5,7 +5,10 @@ import org.lukawska.springaop.validation.exception.BusinessValidationException;
 import org.lukawska.springaop.validation.exception.ValidationError;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -18,6 +21,7 @@ public class BusinessValidationService {
     /**
      * Constructor for the class.
      * It groups the validators by their type and rule name for easy lookup.
+     *
      * @param validators A list of all BusinessValidator beans found in the application context.
      */
     public BusinessValidationService(List<BusinessValidator<?>> validators) {
@@ -34,15 +38,16 @@ public class BusinessValidationService {
     /**
      * Validates a given target object against a set of business rules.
      *
-     * @param <T> The type of the object being validated.
-     * @param target The object to be validated. Cannot be null.
-     * @param failFast If true, the validation stops and throws an exception on the first encountered error.
-     * If false, all applicable rules are executed, and all errors are collected before throwing an exception.
-     * @param ruleNames An optional array of specific rule names to execute.
-     * If null or empty, all validators supporting the target type will be executed.
+     * @param <T>                The type of the object being validated.
+     * @param target             The object to be validated. Cannot be null.
+     * @param failFast           If true, the validation stops and throws an exception on the first encountered error.
+     *                           If false, all applicable rules are executed, and all errors are collected before
+     *                           throwing an exception.
+     * @param ruleNames          An optional array of specific rule names to execute.
+     *                           If null or empty, all validators supporting the target type will be executed.
      * @param customErrorMessage A custom message to be used in the BusinessValidationException if validation fails.
      * @throws BusinessValidationException If any validation errors are found.
-     * Contains a list of all encountered errors.
+     *                                     Contains a list of all encountered errors.
      */
     public <T> void validate(T target, boolean failFast, String[] ruleNames, String customErrorMessage) {
         if (target == null) {
@@ -83,7 +88,7 @@ public class BusinessValidationService {
 
             if (!currentRuleErrors.isEmpty()) {
                 log.info("Validator fail for: {} with errors {} on object {}",
-                    ruleName, currentRuleErrors,targetClass.getName());
+                    ruleName, currentRuleErrors, targetClass.getName());
 
                 allErrors.addAll(currentRuleErrors);
 

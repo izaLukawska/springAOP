@@ -29,6 +29,7 @@
     <properties>
         <java.version>21</java.version>
         <spring-boot.version>3.5.3</spring-boot.version>
+        <redisson.version>3.29.0</redisson.version>
         <micrometer.version>1.15.0</micrometer.version>
         <lombok.version>1.18.38</lombok.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
@@ -49,6 +50,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
             <version>${spring-boot.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <version>${redisson.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

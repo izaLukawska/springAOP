@@ -1,3 +1,5 @@
 package org.lukawska.springaop.dto;
 
-public record UserResponse(Long id, String username, String email, Integer age) {}
+import java.io.Serializable;
+
+public record UserResponse(Long id, String username, String email, Integer age) implements Serializable {}
